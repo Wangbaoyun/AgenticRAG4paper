@@ -62,7 +62,7 @@ async def build_index(
     # 不刷新的话，"同一个进程内先摄入再提问"会拿着空/陈旧的元数据去渲染引用——
     # 表现为引用全是 `unknown`，而索引里其实有完整的书目信息。
     # CLI 每次命令重建 services 所以掩盖了这个陷阱；边界测试用同一进程跑就暴露了。
-    services.sources = SourceStore(services.settings.index_dir).load_sources()
+    services.sources = dict(pipeline.sources)  # type: ignore[attr-defined]
     return report
 
 

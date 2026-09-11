@@ -228,6 +228,13 @@ class IngestPipeline:
         # 文献元数据必须与索引一同持久化：查询阶段要靠它把 source_key 渲染成
         # 可读引用与 BibTeX，而索引里只存 fragment 与向量。
         self.source_store = SourceStore(self.index_dir)
+        #: 摄入结束后，索引里的**全部**文献元数据。
+        #:
+        #: 调用方（尤其是"同一进程内先摄入再提问"的场景）需要它来刷新自己持有的
+        #: 元数据视图——否则会拿着构造时的空快照去渲染引用，表现为引用全是
+        #: ``unknown``，而索引里其实有完整信息。放在这里而不是让调用方各自去
+        #: 读盘，是因为**状态的改变发生在这里**，刷新责任就该在这里收口。
+        self.sources: dict[str, Source] = {}
 
     # ------------------------------------------------------------------ 发现 --
 
@@ -421,6 +428,7 @@ class IngestPipeline:
         await self._persist_indexes()
         self.manifest_store.save(manifest)
         self.source_store.save_sources(stored_sources)
+        self.sources = dict(stored_sources)
         logger.info("摄入完成：%s", report.summary())
         return report
 
