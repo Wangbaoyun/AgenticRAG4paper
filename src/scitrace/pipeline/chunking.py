@@ -316,22 +316,60 @@ _REFERENCE_HEADINGS = frozenset(
 )
 
 
-def _reference_cut_index(rows: list[tuple[str, int]]) -> int | None:
-    """在行序列中定位参考文献区块的起始行号；未找到返回 ``None``。
+def _looks_like_reference_entry(line: str) -> bool:
+    """判断一行是否像参考文献条目。
 
-    判定刻意**宽松于** :func:`detect_heading`：参考文献标题的形式很杂
-    （``References`` / ``REFERENCES`` / ``Bibliography`` / ``参考文献``），
-    而章节标题识别为了减少误判是很严格的。两者目标不同，不应共用同一套规则。
-
-    另加一条保护：其后必须还有足够多的内容（> 3 行），避免把正文里
-    单独成行的 "References"（例如某句的续行）当作区块起点。
+    必要性来自一个真实的误判：`detect_heading` 会把 "3. See Table 1b for ..."
+    这类带编号的句子识别成标题。若用它作为"参考文献区块到此结束"的信号，
+    区块会被过早截断；虽然那只是少过滤几条噪声，但这里仍然把它挡掉，
+    让判据的语义更清晰。
     """
-    for index, (line, _page) in enumerate(rows):
-        candidate = normalize_text(line).strip().lower().rstrip(":：.．")
-        if candidate in _REFERENCE_HEADINGS and len(rows) - index > 3:
-            logger.debug("定位到参考文献区块，起始行 %d（%r）", index, line.strip())
-            return index
-    return None
+    stripped = line.lstrip()
+    if stripped.startswith("["):
+        return bool(re.match(r"\[\d+\]", stripped))
+    if re.match(r"\d{1,3}\.\s", stripped):
+        return bool(re.search(r"\b(?:19|20)\d{2}\b", line))
+    return False
+
+
+def _reference_blocks(rows: list[tuple[str, int]]) -> list[tuple[int, int]]:
+    """找出全部参考文献区块，返回 ``[(起始行, 结束行), ...]``（结束行不含）。
+
+    ## 为什么不是"从 References 一路切到文末"
+
+    最初的实现就是这么做的，理由是"参考文献在文章最后"。这个假设在
+    **真实的论文上不成立**：实测 PaperQA2 原文（25 页）的正文只有 9 页，
+    第 9 页末尾是 References，而第 12–25 页是 "8 Methods / 8.1 PaperQA
+    Implementation and Parameters / 8.2 LitQA / 8.3 WikiCrow" 等**实质性附录**。
+    按原实现会静默丢弃全文 60% 的内容——而单元测试用的是合成文档
+    （参考文献永远在最后），完全测不到这一点。
+
+    现在的规则是：区块从"独立的 References 标题"开始，到**下一个真正的章节标题**
+    为止；之后的内容照常收录。若找不到后续标题，则切到文末（保持原行为）。
+    """
+    blocks: list[tuple[int, int]] = []
+    index = 0
+    total = len(rows)
+    while index < total:
+        candidate = normalize_text(rows[index][0]).strip().lower().rstrip(":：.．")
+        # 保护条件：标题之后必须至少还有一行非空内容，否则不予处理。
+        # 早先这里写的是 "至少 4 行"，结果把**位于文末的短参考文献区块**整个漏掉——
+        # 论文正文引用与附录引用分开列时，第二段列表往往就是这种短区块。
+        has_content_after = any(rows[i][0].strip() for i in range(index + 1, total))
+        if candidate not in _REFERENCE_HEADINGS or not has_content_after:
+            index += 1
+            continue
+        end = index + 1
+        while end < total:
+            line = rows[end][0]
+            next_is_blank = end + 1 < total and not rows[end + 1][0].strip()
+            if detect_heading(line, next_line_is_blank=next_is_blank) and not _looks_like_reference_entry(line):
+                break
+            end += 1
+        logger.debug("参考文献区块：行 %d–%d（%d 行）", index, end, end - index)
+        blocks.append((index, end))
+        index = end
+    return blocks
 
 
 def strip_references_section(text: str) -> str:
@@ -340,10 +378,11 @@ def strip_references_section(text: str) -> str:
     动机见模块 docstring：参考文献区与正文高度同质，是检索噪声的主要来源。
     """
     rows = [(line, 0) for line in text.splitlines()]
-    cut = _reference_cut_index(rows)
-    if cut is None:
+    blocks = _reference_blocks(rows)
+    if not blocks:
         return text
-    return "\n".join(line for line, _ in rows[:cut])
+    dropped = {index for start, end in blocks for index in range(start, end)}
+    return "\n".join(line for index, (line, _) in enumerate(rows) if index not in dropped)
 
 
 # --------------------------------------------------------------------------- #
@@ -374,7 +413,7 @@ def _iter_page_lines(document: ParsedDocument) -> list[tuple[str, int]]:
 def _build_units(rows: list[tuple[str, int]]) -> list[TextUnit]:
     """按"章节 → 段落"两级结构把行序列组织成 :class:`TextUnit`。
 
-    本函数**不负责**剔除参考文献区——那由 :func:`_reference_cut_index` 在更上游
+    本函数**不负责**剔除参考文献区——那由 :func:`_reference_blocks` 在更上游
     一次性完成。职责分开是为了让"结构识别"与"噪声区裁剪"两件事各自可测，
     也避免同一判断在两处实现后逐渐不一致。
     """
@@ -591,9 +630,10 @@ def chunk_document(
 
     rows = _iter_page_lines(document)
     if config.drop_references:
-        cut = _reference_cut_index(rows)
-        if cut is not None:
-            rows = rows[:cut]
+        blocks = _reference_blocks(rows)
+        if blocks:
+            dropped = {index for start, end in blocks for index in range(start, end)}
+            rows = [row for index, row in enumerate(rows) if index not in dropped]
 
     units = _build_units(rows)
     units = _merge_units(units, config)

@@ -43,7 +43,18 @@ from scitrace.prompts import PromptSet, is_refusal
 
 logger = logging.getLogger(__name__)
 
+class SynthesisError(RuntimeError):
+    """合成阶段无法产出可用输出。
+
+    单独定义而不是复用 ``RuntimeError``：调用方需要区分"模型明确说了证据不足"
+    （正常拒答）与"模型什么都没产出来"（故障）。把后者当成前者，
+    会让一次真实故障在报告里显示成"系统认为无法回答"——**这是最坏的混淆**，
+    因为它把一个需要修的问题伪装成了一个正确的行为。
+    """
+
+
 __all__ = [
+    "SynthesisError",
     "AnswerSynthesizer",
     "bind_citations",
     "count_dangling",
@@ -316,12 +327,54 @@ class AnswerSynthesizer:
             temperature=self.settings.temperature,
             max_tokens=self.settings.max_tokens,
         )
-        self.last_usage = Usage(
+        usage = Usage(
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             estimated_cost_usd=response.cost_usd,
             llm_calls=1,
-            dangling_citations=count_dangling(response.content, evidence),
+        )
+
+        if not response.content.strip():
+            # 推理模型会把思考过程单独放在 reasoning_content 里，
+            # 一旦 max_tokens 被思考吃光，content 就是空的、finish_reason 为 length。
+            # 真实数据上验证过：同一提示词在 4096 预算下返回空串。
+            # 这里用**双倍预算重试一次**——把一次本可避免的失败变成成功，
+            # 比直接报错更符合用户利益。
+            logger.warning(
+                "合成输出为空（finish_reason=%r，completion_tokens=%d），"
+                "以双倍预算重试一次",
+                response.finish_reason,
+                response.completion_tokens,
+            )
+            response = await self.llm.complete(
+                [
+                    LLMMessage(role="system", content=system),
+                    LLMMessage(role="user", content=user),
+                ],
+                temperature=self.settings.temperature,
+                max_tokens=self.settings.max_tokens * 2,
+            )
+            usage = usage.merge(
+                Usage(
+                    prompt_tokens=response.prompt_tokens,
+                    completion_tokens=response.completion_tokens,
+                    estimated_cost_usd=response.cost_usd,
+                    llm_calls=1,
+                )
+            )
+            if not response.content.strip():
+                self.last_usage = usage
+                raise SynthesisError(
+                    "模型两次均返回空输出"
+                    f"（finish_reason={response.finish_reason!r}，"
+                    f"completion_tokens={response.completion_tokens}）。"
+                    "若为推理模型，请提高 llm.max_tokens。"
+                )
+
+        # 注：token 与成本已在上面几次调用中累加进 usage，这里只补悬空引用计数。
+        # 重复累加 token 会让成本报表翻倍，而那种错误在报表上完全看不出来。
+        self.last_usage = usage.merge(
+            Usage(dangling_citations=count_dangling(response.content, evidence))
         )
 
         answer = bind_citations(response.content, evidence=evidence, sources=sources)

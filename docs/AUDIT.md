@@ -6,14 +6,14 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 生成时间 | 2026-09-11 16:14:37 +0800 |
+| 生成时间 | 2026-09-11 16:29:35 +0800 |
 | 目标项目（待审计） | `/home/wby/MyPaperQA` |
 | 参考实现（比对基准） | `/home/wby/PaperQA` |
 | 上游 HEAD commit | `0a03fb09619c566470d07ab443ca8a7376b11d00` |
 | 上游 HEAD 提交信息 | chore: 移除不再使用的上游教程与 CI 配置 |
 | 参考侧文件集来源 | git ls-files（索引中的跟踪文件） |
 | 上游 HEAD 跟踪文件数 | 172（另有 0 个路径在 HEAD 中不存在，已跳过） |
-| 目标侧纳入审计的文件数 | 97 |
+| 目标侧纳入审计的文件数 | 99 |
 | n-gram 长度（源码 / 文档） | 8 / 12 |
 | 整体 containment 阈值 | 2.00% |
 | 单文件 containment 阈值 | 5.00% |
@@ -26,19 +26,19 @@
 
 | 检查项 | 状态 | 关键指标 | 阈值 |
 | --- | --- | --- | --- |
-| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.5018%（Jaccard 0.2538%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
-| 2. 逐行精确复制 | ✅ 通过 | 逐字相同行 354（实质性 0 / 通用惯用式 354）；最长对齐片段 2 行 | 实质性 ≤ 0 行 且 对齐片段 < 5 行 |
-| 3. 字符串字面量相似度（阈值 0.60） | ✅ 通过 | 违规相似串 0 条（≥0.60 相似串 35 条）；专有标识符违规 0 处（说明性提及 2 处） | 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0 |
+| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.4990%（Jaccard 0.2534%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
+| 2. 逐行精确复制 | ✅ 通过 | 逐字相同行 359（实质性 0 / 通用惯用式 359）；最长对齐片段 2 行 | 实质性 ≤ 0 行 且 对齐片段 < 5 行 |
+| 3. 字符串字面量相似度（阈值 0.60） | ✅ 通过 | 违规相似串 0 条（≥0.60 相似串 36 条）；专有标识符违规 0 处（说明性提及 9 处） | 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0 |
 | 4. 依赖审计 | ✅ 通过 | 禁用依赖 0 处；警告 0 处 | 禁用依赖 = 0 |
 | 5. 资产 / 文档审计（文档 n=12） | ✅ 通过 | 哈希相同资产 0 个；文档整体 containment 0.0892%（最高 0.6594%） | 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00% |
 
 ## 1. Token n-gram 重叠（n=8）
 
-**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.5018%（Jaccard 0.2538%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
+**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.4990%（Jaccard 0.2534%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
 
 - 上游参考 n-gram 池：**82,410** 个（来自 58 个 `.py` 文件）
-- 目标 n-gram 池：**83,903** 个（扫描 87 个 `.py` 文件）
-- 交集：**421** 个
+- 目标 n-gram 池：**84,575** 个（扫描 87 个 `.py` 文件）
+- 交集：**422** 个
 
 #### 重叠最高的前 20 个目标文件
 
@@ -51,18 +51,18 @@
 | 5 | `src/scitrace/domain/session.py` | 5.3385% | 41 | 768 | 0 |
 | 6 | `src/scitrace/domain/source.py` | 5.0485% | 52 | 1,030 | 0 |
 | 7 | `src/scitrace/ports/llm.py` | 5.0420% | 18 | 357 | 0 |
-| 8 | `src/scitrace/config/settings.py` | 4.2956% | 93 | 2,165 | 0 |
+| 8 | `src/scitrace/config/settings.py` | 4.2897% | 93 | 2,168 | 0 |
 | 9 | `src/scitrace/ports/vector_index.py` | 3.4146% | 7 | 205 | 0 |
 | 10 | `src/scitrace/adapters/llm/embedding.py` | 3.2787% | 28 | 854 | 0 |
 | 11 | `src/scitrace/util/hashing.py` | 3.0488% | 10 | 328 | 0 |
 | 12 | `src/scitrace/ports/metadata.py` | 2.7322% | 5 | 183 | 0 |
 | 13 | `tests/fakes.py` | 2.4506% | 36 | 1,469 | 0 |
 | 14 | `src/scitrace/agent/state.py` | 2.0619% | 10 | 485 | 0 |
-| 15 | `src/scitrace/pipeline/synthesis.py` | 2.0117% | 24 | 1,193 | 0 |
+| 15 | `src/scitrace/pipeline/synthesis.py` | 1.9486% | 25 | 1,283 | 0 |
 | 16 | `src/scitrace/service/store.py` | 1.8462% | 12 | 650 | 0 |
 | 17 | `src/scitrace/adapters/metadata/http_base.py` | 1.7801% | 34 | 1,910 | 0 |
-| 18 | `src/scitrace/pipeline/retrieval.py` | 1.6310% | 16 | 981 | 0 |
-| 19 | `src/scitrace/adapters/llm/litellm_client.py` | 1.6272% | 11 | 676 | 0 |
+| 18 | `src/scitrace/adapters/llm/litellm_client.py` | 1.6807% | 12 | 714 | 0 |
+| 19 | `src/scitrace/pipeline/retrieval.py` | 1.6310% | 16 | 981 | 0 |
 | 20 | `tests/test_util.py` | 1.5544% | 12 | 772 | 0 |
 
 **✅ 统计超标但判定通过的文件（containment > 5.00%，但最长公共片段 < 25 token）：**
@@ -97,11 +97,11 @@
 
 ## 2. 逐行精确复制
 
-**状态：** ✅ 通过　　**关键指标：** 逐字相同行 354（实质性 0 / 通用惯用式 354）；最长对齐片段 2 行　　**阈值：** 实质性 ≤ 0 行 且 对齐片段 < 5 行
+**状态：** ✅ 通过　　**关键指标：** 逐字相同行 359（实质性 0 / 通用惯用式 359）；最长对齐片段 2 行　　**阈值：** 实质性 ≤ 0 行 且 对齐片段 < 5 行
 
 - 上游可比对代码行索引：**12,237** 条唯一非空行（`.py`，已剔除 <12 字符与通用样板）
-- 目标侧扫描的非空行：**15,180** 行
-- 命中（逐字相同）：**354** 行，其中 **实质性 0** 行、通用惯用式 354 行
+- 目标侧扫描的非空行：**15,358** 行
+- 命中（逐字相同）：**359** 行，其中 **实质性 0** 行、通用惯用式 359 行
 - 属于通用样板（import / `if __name__` 等）而完全忽略：**0** 行
 - 行号同步递增的对齐片段：**1** 段，最长 **2** 行
 
@@ -140,14 +140,14 @@
 
 ## 3. 字符串字面量相似度（阈值 0.60）
 
-**状态：** ✅ 通过　　**关键指标：** 违规相似串 0 条（≥0.60 相似串 35 条）；专有标识符违规 0 处（说明性提及 2 处）　　**阈值：** 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0
+**状态：** ✅ 通过　　**关键指标：** 违规相似串 0 条（≥0.60 相似串 36 条）；专有标识符违规 0 处（说明性提及 9 处）　　**阈值：** 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0
 
 - 上游字符串字面量（≥20 字符，已跳过 docstring）：**1,778** 条
-- 目标字符串字面量（≥20 字符，已跳过 docstring）：**592** 条
-- 与上游最相似串相似度 ≥ 0.60 的目标串：**35** 条
+- 目标字符串字面量（≥20 字符，已跳过 docstring）：**607** 条
+- 与上游最相似串相似度 ≥ 0.60 的目标串：**36** 条
 - 其中**判定为违规**（实际匹配字符数 ≥ 32）：**0** 条
 - 说明：相似度高但匹配字符数不足的字符串，多为 DOI / URL / arXiv 编号 / 作者名 / 纯标识符等**事实性短串**（DOI 天生彼此相似），不含受保护表达，因此不判失败；可用 `--min-matched-chars` 调整该门槛。
-- 专有标识符：违规 **0** 处、说明性提及（注释 / docstring）**2** 处
+- 专有标识符：违规 **0** 处、说明性提及（注释 / docstring）**9** 处
 
 #### 相似度最高的前 20 对字符串（目标 ← 上游）
 
@@ -164,15 +164,15 @@
 | 9 | 0.841 · | 29 | `tests/test_similarity_audit.py`:266 | `tests/test_paperqa.py`:2740 | `KNOWN = "https://doi.org/10.31224/4087"\n` | `https://doi.org/10.31224/4087` |
 | 10 | 0.792 · | 19 | `src/scitrace/config/settings.py`:102 | `tests/test_paperqa.py`:1161 | `deepseek/deepseek-chat` | `deepseek/deepseek-reasoner` |
 | 11 | 0.792 · | 19 | `tests/test_config.py`:75 | `tests/test_paperqa.py`:1161 | `deepseek/deepseek-chat` | `deepseek/deepseek-reasoner` |
-| 12 | 0.694 · | 17 | `tests/test_agent_runtime.py`:535 | `src/paperqa/clients/client_models.py`:133 | `metadata source down` | `Metadata service is down for ` |
-| 13 | 0.683 · | 14 | `tests/test_ingest.py`:79 | `src/paperqa/agents/search.py`:476 | `should not be indexed` | ` could not be found.` |
-| 14 | 0.683 · | 14 | `tests/test_ingest.py`:80 | `src/paperqa/agents/search.py`:476 | `should not be indexed` | ` could not be found.` |
-| 15 | 0.676 · | 23 | `tests/test_similarity_audit.py`:271 | `tests/test_paperqa.py`:2740 | `SAMPLE = "https://doi.org/10.1234/ABC"\n` | `https://doi.org/10.31224/4087` |
-| 16 | 0.667 · | 17 | `tests/test_llm_adapters.py`:266 | `src/paperqa/clients/semantic_scholar.py`:310 | `Invalid API key provided` | `Valid DOI must be provided.` |
-| 17 | 0.667 · | 14 | `src/scitrace/domain/evidence.py`:67 | `tests/test_paperqa.py`:1451 | `Evidence.summary 不能为空` | `evidence_skip_summary` |
-| 18 | 0.667 · | 13 | `tests/test_llm_adapters.py`:117 | `tests/test_paperqa.py`:3363 | `this is not json at all` | `{"example": "this is a \"json\""}` |
-| 19 | 0.667 · | 13 | `tests/test_llm_adapters.py`:119 | `tests/test_paperqa.py`:3363 | `this is not json at all` | `{"example": "this is a \"json\""}` |
-| 20 | 0.655 · | 18 | `src/scitrace/prompts/library.py`:185 | `tests/test_paperqa.py`:1451 | `[$evidence_key] $citation\n$summary` | `evidence_skip_summary` |
+| 12 | 0.760 · | 19 | `tests/test_ingest.py`:298 | `tests/test_clients.py`:792 | `10.48550/arxiv.2409.13740` | `10.48550/arxiv.1706.03762` |
+| 13 | 0.694 · | 17 | `tests/test_agent_runtime.py`:535 | `src/paperqa/clients/client_models.py`:133 | `metadata source down` | `Metadata service is down for ` |
+| 14 | 0.683 · | 14 | `tests/test_ingest.py`:79 | `src/paperqa/agents/search.py`:476 | `should not be indexed` | ` could not be found.` |
+| 15 | 0.683 · | 14 | `tests/test_ingest.py`:80 | `src/paperqa/agents/search.py`:476 | `should not be indexed` | ` could not be found.` |
+| 16 | 0.676 · | 23 | `tests/test_similarity_audit.py`:271 | `tests/test_paperqa.py`:2740 | `SAMPLE = "https://doi.org/10.1234/ABC"\n` | `https://doi.org/10.31224/4087` |
+| 17 | 0.667 · | 17 | `tests/test_llm_adapters.py`:266 | `src/paperqa/clients/semantic_scholar.py`:310 | `Invalid API key provided` | `Valid DOI must be provided.` |
+| 18 | 0.667 · | 14 | `src/scitrace/domain/evidence.py`:67 | `tests/test_paperqa.py`:1451 | `Evidence.summary 不能为空` | `evidence_skip_summary` |
+| 19 | 0.667 · | 13 | `tests/test_llm_adapters.py`:117 | `tests/test_paperqa.py`:3363 | `this is not json at all` | `{"example": "this is a \"json\""}` |
+| 20 | 0.667 · | 13 | `tests/test_llm_adapters.py`:119 | `tests/test_paperqa.py`:3363 | `this is not json at all` | `{"example": "this is a \"json\""}` |
 
 _标记说明：❗ = 违规（相似度与匹配字符数同时达标）；· = 相似度达标但匹配字符数不足，不计为违规。_
 
@@ -190,6 +190,13 @@ _无。_
 | --- | --- | --- | --- | --- | --- |
 | 1 | `pyproject.toml` | 33 | `paper-qa` | `comment` | `# 明确不依赖任何 paper-qa* / fhaviary / aviary / fhlmi / ldp ——` |
 | 2 | `src/scitrace/__init__.py` | 3 | `paperqa` | `docstring` | `设计范式参考 PaperQA2（arXiv:2409.13740）所述的公开方法，代码为独立实现。` |
+| 3 | `src/scitrace/adapters/parsers/pypdf_parser.py` | 146 | `paperqa` | `comment` | ```# 内嵌标题是 "paperqa2"，而 ``apply_patch`` 又规定"不覆盖已有值"，``` |
+| 4 | `src/scitrace/adapters/parsers/pypdf_parser.py` | 148 | `paperqa` | `comment` | ```# ``(anonndpaperqa2 pages 2-3)``。``` |
+| 5 | `src/scitrace/pipeline/chunking.py` | 341 | `paperqa` | `docstring` | `**真实的论文上不成立**：实测 PaperQA2 原文（25 页）的正文只有 9 页，` |
+| 6 | `src/scitrace/pipeline/chunking.py` | 342 | `paperqa` | `docstring` | `第 9 页末尾是 References，而第 12–25 页是 "8 Methods / 8.1 PaperQA` |
+| 7 | `src/scitrace/pipeline/ingest.py` | 312 | `paperqa` | `comment` | ```# 文内引用退化成 ``(anonndpaperqa2 pages 2-3)``。``` |
+| 8 | `tests/test_chunking.py` | 165 | `paperqa` | `docstring` | `回归自真实数据：PaperQA2 原文正文只有 9 页，第 9 页末尾是 References，` |
+| 9 | `tests/test_ingest.py` | 287 | `paperqa` | `docstring` | ```补不上，文内引用退化成 ``(anonndpaperqa2 pages 2-3)``；``` |
 
 _上述提及属于归属声明或说明性文字（例如指明设计范式来源、声明不依赖上游包），不含受保护的表达，因此不计为违规；如需最严格口径可加 `--strict-identifiers`。_
 

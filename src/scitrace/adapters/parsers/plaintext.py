@@ -107,7 +107,8 @@ class PlainTextParser:
             for index, content in enumerate(raw_pages, start=1)
         ]
 
-        hints: dict[str, str] = {"title": path.stem}
+        # 同 PyPDFParser：文件名只作兜底，不冒充标题线索
+        hints: dict[str, str] = {"fallback_title": path.stem}
         if _stem_looks_like_citation_key(path.stem):
             hints["citation_key"] = path.stem
 

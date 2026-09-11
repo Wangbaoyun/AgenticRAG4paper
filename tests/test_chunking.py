@@ -159,6 +159,45 @@ class TestStripReferences:
         text = "Just body text.\n\nSecond paragraph."
         assert strip_references_section(text) == text
 
+    def test_appendix_after_references_is_kept(self) -> None:
+        """参考文献之后还有附录时，附录**必须保留**。
+
+        回归自真实数据：PaperQA2 原文正文只有 9 页，第 9 页末尾是 References，
+        第 12–25 页是 "8 Methods / 8.1 ... / 8.2 LitQA" 等实质性附录。
+        早先的实现"从 References 一路切到文末"，静默丢掉了全文 60% 的内容——
+        而此前所有测试用的合成文档都把参考文献放在最后，完全测不到。
+        """
+        text = (
+            "Body paragraph with real content.\n\n"
+            "References\n\n"
+            "[1] Someone. A paper title. 2020.\n"
+            "[2] Other. Another paper title. 2021.\n\n"
+            "8 Methods\n\n"
+            "This appendix describes the implementation in detail.\n"
+        )
+        kept = strip_references_section(text)
+        assert "This appendix describes" in kept, "附录被误删"
+        assert "Another paper title" not in kept, "参考文献未被剔除"
+
+    def test_second_reference_block_is_also_removed(self) -> None:
+        """附录之后可能还有第二段参考文献（正文引用 + 附录引用分开列）。"""
+        text = (
+            "Body.\n\nReferences\n\n[1] First list entry with a year 2020.\n\n"
+            "8 Methods\n\nAppendix content that matters.\n\n"
+            "References\n\n[2] Second list entry with a year 2021.\n"
+        )
+        kept = strip_references_section(text)
+        assert "Appendix content that matters." in kept
+        assert "First list entry" not in kept
+        assert "Second list entry" not in kept
+
+    def test_reference_list_at_end_still_removed(self) -> None:
+        """找不到后续标题时保持原行为：切到文末。"""
+        text = "Body.\n\nReferences\n\n[1] Entry one.\n[2] Entry two.\n[3] Entry three.\n"
+        kept = strip_references_section(text)
+        assert "Entry one" not in kept
+        assert "Body." in kept
+
 
 def make_document(*pages: str, parser: str = "plaintext") -> ParsedDocument:
     return ParsedDocument(
@@ -258,6 +297,20 @@ class TestChunkDocument:
         doc = make_document("1 A\n\nText one.\n\nText two long enough to matter.")
         chunks = chunk_document(doc, source_key="s1")
         assert [item.chunk_index for item in chunks] == list(range(len(chunks)))
+
+    def test_appendix_survives_chunking(self) -> None:
+        """端到端：附录内容必须真的出现在片段里。"""
+        doc = make_document(
+            "Main body paragraph with substantial content here.\n\n"
+            "References\n\n"
+            "[1] Someone. A paper title. 2020.\n[2] Other. Another paper. 2021.\n\n"
+            "8 Methods\n\n"
+            "The appendix describes implementation parameters in detail."
+        )
+        chunks = chunk_document(doc, source_key="s1")
+        joined = "\n".join(chunk.text for chunk in chunks)
+        assert "appendix describes implementation" in joined
+        assert "Another paper" not in joined
 
     def test_references_dropped_when_configured(self) -> None:
         doc = make_document(

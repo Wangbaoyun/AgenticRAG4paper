@@ -297,6 +297,9 @@ class AgentRuntime:
         优先级：被截断 > 未确定 > 兜底。截断优先是因为它是对用户最需要知道的
         事实——"这个答案不完整"比"这个答案不够确定"更重要。
         """
+        if "synthesis_failed" in self.state.notes:
+            # 合成故障优先于一切：用户拿到的是"没有答案"，而不是"不确定的答案"。
+            return SessionStatus.FAIL
         for reason in ("timeout", "budget_exceeded", "max_steps_exceeded", "no_new_evidence"):
             if reason in self.state.notes:
                 return SessionStatus.TRUNCATED

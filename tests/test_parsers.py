@@ -81,7 +81,9 @@ class TestPlainTextParser:
         assert document.parser == "plaintext"
         assert document.n_pages == 1
         assert "Some text here." in document.full_text
-        assert document.hints["title"] == "notes"
+        # 文件名只作兜底，不冒充标题线索（否则它会挡住元数据补全查到的真标题）
+        assert "title" not in document.hints
+        assert document.hints["fallback_title"] == "notes"
 
     async def test_form_feed_creates_pages(self, tmp_path: Path) -> None:
         target = tmp_path / "paged.txt"

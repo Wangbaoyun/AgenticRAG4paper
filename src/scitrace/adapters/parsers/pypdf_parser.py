@@ -137,20 +137,32 @@ class PyPDFParser:
                 cleaned = value.strip()
                 # 排版软件写进去的占位标题（"Microsoft Word - 未命名文档.docx"）
                 # 比没有标题更糟：它会被当作线索送进元数据补全，污染检索结果。
-                if target_key == "title" and _is_placeholder_title(cleaned):
+                if target_key == "title" and _is_placeholder_title(cleaned, path):
                     logger.debug("忽略占位标题：%r", cleaned)
                     continue
                 hints[target_key] = cleaned
-        hints.setdefault("title", path.stem)
+        # **文件名只作为最后兜底**，不进 ``title``。
+        # 它混淆进 title 的后果在真实数据上立刻显现：本项目的样例论文
+        # 内嵌标题是 "paperqa2"，而 ``apply_patch`` 又规定"不覆盖已有值"，
+        # 于是 Crossref 查到的真实标题永远补不上，文内引用渲染成
+        # ``(anonndpaperqa2 pages 2-3)``。
+        hints["fallback_title"] = path.stem
         hints["filename"] = path.name
         return hints
 
 
-def _is_placeholder_title(title: str) -> bool:
-    """判断内嵌标题是否是排版软件留下的占位符。"""
+def _is_placeholder_title(title: str, path: Path | None = None) -> bool:
+    """判断内嵌标题是否是排版软件留下的占位符。
+
+    多一条判据：**标题与文件名相同**。很多工具在导出 PDF 时把文件名写进
+    Title 字段，这样的标题不携带任何信息，却会被当作"线索"送去元数据补全，
+    而且因为合并规则不覆盖已有值，它还会**永久挡住**查到的真实标题。
+    """
     lowered = title.strip().lower()
-    return (
+    if (
         lowered.endswith((".doc", ".docx", ".tex", ".indd"))
         or lowered in {"untitled", "unknown", "document", "microsoft word"}
         or "untitled" in lowered
-    )
+    ):
+        return True
+    return path is not None and lowered == path.stem.strip().lower()

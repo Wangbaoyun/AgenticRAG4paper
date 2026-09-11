@@ -15,6 +15,7 @@ import logging
 from pydantic import BaseModel, Field
 
 from scitrace.agent.state import AgentState, Tool, ToolOutcome, status_line
+from scitrace.pipeline.synthesis import SynthesisError
 from scitrace.ports import ScoredFragment
 
 logger = logging.getLogger(__name__)
@@ -161,9 +162,18 @@ class AnswerQuestionTool(Tool):
             return ToolOutcome(
                 observation="当前没有任何证据，无法作答。请先调用 gather_evidence。"
             )
-        answer = await self.services.synthesizer.synthesize(
-            state.question, state.evidence, sources=self.services.sources
-        )
+        try:
+            answer = await self.services.synthesizer.synthesize(
+                state.question, state.evidence, sources=self.services.sources
+            )
+        except SynthesisError as error:
+            # 合成**故障**与"模型说了证据不足"必须分开：前者是 FAIL，
+            # 后者是正常的 REFUSED/UNSURE。混为一谈会把一个需要修的问题
+            # 伪装成一个正确的行为。
+            state.notes.append("synthesis_failed")
+            logger.error("合成失败：%s", error)
+            self.services.merge_usage(self.services.synthesizer.last_usage)
+            raise
         self.services.merge_usage(self.services.synthesizer.last_usage)
         state.answer = answer
         if answer.refused:

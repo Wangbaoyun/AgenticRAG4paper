@@ -39,7 +39,7 @@ from scitrace.ports import (
 )
 from scitrace.service import SourceStore
 from scitrace.util.hashing import hash_file
-from scitrace.util.text import find_doi
+from scitrace.util.text import find_arxiv_id, find_doi
 
 logger = logging.getLogger(__name__)
 
@@ -302,10 +302,22 @@ class IngestPipeline:
         document = await self._resolve_parser(path).parse(path)
 
         hints = document.hints
-        first_page = document.pages[0].text if document.pages else ""
-        doi = find_doi(first_page[:4000])
+        first_page = (document.pages[0].text if document.pages else "")[:4000]
+        doi = find_doi(first_page)
+        if doi is None:
+            # 预印本常只印 ``arXiv:2409.13740`` 而不印 DOI。arXiv 为每篇预印本
+            # 分配了固定格式的 DOI（``10.48550/arXiv.<编号>``），据此构出 DOI
+            # 就能让元数据来源走**精确端点**而不是模糊检索，命中率与准确率
+            # 都是另一个量级。实测：不加这一步时，一篇 arXiv 论文的标题补不上，
+            # 文内引用退化成 ``(anonndpaperqa2 pages 2-3)``。
+            arxiv_id = find_arxiv_id(first_page)
+            if arxiv_id:
+                doi = f"10.48550/arXiv.{arxiv_id}"
+                logger.debug("由 arXiv 编号构造 DOI：%s", doi)
         patch = SourcePatch(
-            title=hints.get("title") or path.stem,
+            # 只有**真实的内嵌标题**才作为查询线索；文件名不在其中——
+            # 用文件名去 Crossref 模糊检索只会搜出无关论文。
+            title=hints.get("title"),
             authors=_split_author_string(hints.get("authors")),
             doi=doi,
         )
@@ -316,7 +328,7 @@ class IngestPipeline:
             key=make_source_key(doi=patch.doi, content_hash=digest),
             content_hash=digest,
             rel_path=identifier,
-            title=patch.title or path.stem,
+            title=patch.title or hints.get("fallback_title") or path.stem,
             authors=patch.authors or [],
             year=patch.year,
             doi=patch.doi,

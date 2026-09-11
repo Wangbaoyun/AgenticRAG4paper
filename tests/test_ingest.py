@@ -279,6 +279,34 @@ class TestIndexing:
         source = next(iter(report.sources.values()))
         assert source.doi == "10.5555/example.2024.007"
 
+    async def test_arxiv_id_becomes_doi_when_no_doi_printed(self, harness: Harness) -> None:
+        """预印本常只印 arXiv 编号而不印 DOI。
+
+        arXiv 为每篇预印本分配固定格式的 DOI，据此构出 DOI 就能让元数据来源
+        走**精确端点**。回归自实机验证：不加这一步时，一篇 arXiv 论文的标题
+        补不上，文内引用退化成 ``(anonndpaperqa2 pages 2-3)``；
+        加上之后变成 ``(skarlinski2024language pages 2-3)``。
+        """
+        harness.write(
+            "preprint.txt",
+            "Language agents achieve superhuman synthesis\n"
+            "arXiv:2409.13740v1  [cs.AI]  10 Sep 2024\n\n"
+            "Body content that is long enough to be chunked.",
+        )
+        report = await harness.run()
+        source = next(iter(report.sources.values()))
+        assert source.doi == "10.48550/arxiv.2409.13740"
+
+    async def test_printed_doi_wins_over_arxiv_id(self, harness: Harness) -> None:
+        """两者都出现时以印出来的 DOI 为准——它才是出版方分配的那个。"""
+        harness.write(
+            "both.txt",
+            "Some paper\narXiv:2409.13740\nhttps://doi.org/10.5555/Real.2024.001\n\n"
+            "Body content that is long enough to be chunked.",
+        )
+        report = await harness.run()
+        assert next(iter(report.sources.values())).doi == "10.5555/real.2024.001"
+
     async def test_duplicate_doi_is_reported(self, harness: Harness) -> None:
         """同一 DOI 出现在两个文件里（预印本 + 正式版）会被正确归并，
 

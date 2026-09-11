@@ -22,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["LiteLLMClient"]
 
+#: 已经就"无法估算成本"告警过的模型名。
+#:
+#: 真实运行中这条告警会**每次调用都触发**（一次问答十几次），把终端刷满，
+#: 反而掩盖了真正需要注意的日志。成本拿不到是配置层面的既定事实，
+#: 报一次即可。
+_COST_WARNING_ISSUED: set[str] = set()
+
 
 class LiteLLMClient:
     """满足 :class:`~scitrace.ports.LLMClient` 协议的 LiteLLM 后端。"""
@@ -157,7 +164,14 @@ def _estimate_cost(raw: Any, litellm_module: Any) -> float:
     try:
         cost = litellm_module.completion_cost(completion_response=raw)
     except Exception as error:  # noqa: BLE001 - 价格表缺项是常见情况
-        logger.warning("无法估算调用成本（该模型可能不在价格表中）：%s", error)
+        model = str(getattr(raw, "model", "") or "unknown")
+        if model not in _COST_WARNING_ISSUED:
+            _COST_WARNING_ISSUED.add(model)
+            logger.warning(
+                "无法估算调用成本，本次及后续同类调用将记为 0（模型 %s 不在 litellm 价格表中）：%s",
+                model,
+                error,
+            )
         return 0.0
     try:
         return max(0.0, float(cost))

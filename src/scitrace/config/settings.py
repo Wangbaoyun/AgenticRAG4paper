@@ -215,7 +215,16 @@ class AnswerSettings(_ConfigGroup):
 
     max_evidence: int = Field(default=10, ge=1, description="进入上下文的证据条数上限")
     temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2048, ge=1)
+    max_tokens: int = Field(
+        default=4096,
+        ge=1,
+        description=(
+            "答案合成的输出上限。**推理模型需要留出思考空间**——"
+            "实测 deepseek-v4-flash 在本项目的合成提示词下会把 2048 全部用于思考，"
+            "正文返回空串（finish_reason=length）。合成器有双倍预算重试兜底，"
+            "但把默认值设在合理水平可以避免每次问答都白跑一轮。"
+        ),
+    )
 
 
 class AgentSettings(_ConfigGroup):
