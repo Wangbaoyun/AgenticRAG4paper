@@ -119,6 +119,34 @@ python tools/similarity_audit.py \
 
 ---
 
+## 实现状态
+
+M0–M6 最小可行内核已完成，各项原创增量的落点如下：
+
+| 增量 | 状态 | 落点 |
+| --- | --- | --- |
+| ① 自研 Agent 运行时 | 已实现 | `src/scitrace/agent/`（工具协议、循环、状态机、超时兜底、参数容错） |
+| ② 可插拔检索内核 + 消融 | 已实现 | `pipeline/retrieval.py` 四路策略；`pipeline/screening.py` 两种筛选实现 |
+| ③ 中文文献适配 | 已实现 | `util/tokenize_zh.py`（bigram）、`pipeline/chunking.py`（中文句边界）、提示词中英双语 |
+| ④ 成本与延迟治理 | 已实现 | `agent/budget.py`（闸门）、`Services.usage`（累计口径）、模型分级路由 |
+| ⑤ 自主评测体系 | 骨架就绪 | `benchmarks/qa_eval.py`（指标与 SPEC §1.3 质量目标一一对应） |
+
+**洁净室证据链**（详见 `docs/PROVENANCE.md`）：
+
+- `docs/SPEC.md` —— 冻结的行为规格，含三轮修订记录；
+- `tools/similarity_audit.py` + `docs/AUDIT.md` —— 与上游 git HEAD 逐版本比对的审计，
+  5 项检查全部通过，**最长公共 token 连续片段为 0**；
+- 审计工具自身经过**植入式对抗验证**：从上游植入真实代码后必须失败，
+  否则说明它已退化为恒通过。
+
+**验证覆盖**：单元测试 + 真实适配器集成测试（真实 pypdf / tantivy / numpy +
+内存替换嵌入与 LLM）+ SPEC §8 的 C1–C8 行为契约。
+
+> 说明：真实的 LLM 与本地嵌入模型端到端运行需要 API key 与模型下载，
+> 未在本仓库内执行；端到端链路由上述集成测试覆盖。
+
+---
+
 ## 许可
 
 Apache License 2.0，Copyright 2026 wby。见 `LICENSE` 与 `NOTICE`。
