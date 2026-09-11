@@ -14,77 +14,24 @@ import re
 from typing import Any
 
 from scitrace.ports import LLMMessage, ToolCall
+from scitrace.util.text import (
+    extract_balanced_json_object,
+    parse_json_object,
+    strip_reasoning_tags,
+)
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    # 从 util.text 转出，供历史调用方与测试继续从本模块导入
     "extract_balanced_json_object",
     "normalize_vector",
+    "parse_json_object",
     "parse_tool_arguments",
     "parse_tool_calls",
+    "strip_reasoning_tags",
     "to_backend_messages",
 ]
-
-#: 思维链标签。推理模型（DeepSeek-R1 一类）会在正文里夹带思考过程，
-#: 回填历史消息时必须剥离，否则会把上一轮的思考当成答案的一部分喂回去。
-_THINK_TAG_RE = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
-
-#: Markdown 代码围栏。
-_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)```", re.DOTALL)
-
-
-def strip_reasoning_tags(text: str) -> str:
-    """移除推理模型的思维链标签，返回可见正文。
-
-    Args:
-        text: 模型原始输出。
-
-    Returns:
-        去除 ``<think>…</think>`` 等区块并去除首尾空白后的文本。
-        未闭合的标签会被保留——那通常说明输出被截断，删掉反而丢失线索。
-    """
-    return _THINK_TAG_RE.sub("", text).strip()
-
-
-def extract_balanced_json_object(text: str) -> str | None:
-    """从文本中截取第一个**括号配平**的 JSON 对象。
-
-    比"取第一个 ``{`` 到最后一个 ``}``"稳健得多：后者在模型输出
-    "先给一个示例 ``{...}``，然后是真正的结果 ``{...}``" 时会取到跨越两段的
-    非法字符串。这里的实现跟踪字符串字面量与转义状态，逐字符定位配平点。
-
-    Args:
-        text: 待搜索文本。
-
-    Returns:
-        截取到的子串；未找到配平对象时返回 ``None``。
-    """
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(text)):
-        char = text[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return text[start : index + 1]
-    return None
-
 
 def parse_tool_arguments(raw: str | None) -> tuple[dict[str, Any] | None, str | None]:
     """解析工具调用的参数串。
@@ -104,56 +51,33 @@ def parse_tool_arguments(raw: str | None) -> tuple[dict[str, Any] | None, str | 
     if raw is None or not raw.strip():
         return {}, None
 
-    text = strip_reasoning_tags(raw)
-    for candidate in (text, _strip_fence(text), extract_balanced_json_object(text) or ""):
-        if not candidate:
-            continue
+    parsed = parse_json_object(raw)
+    if parsed is not None:
+        return parsed, None
+
+    # 顶层是数组的情况：包一层，让上层拿到确定的结构而不是拿到 list 再各自判断。
+    # 注意 extract_balanced_json_object 只识别花括号，数组要单独走一遍。
+    for candidate in _plain_candidates(raw):
         try:
-            parsed = json.loads(candidate)
+            loaded = json.loads(candidate)
         except json.JSONDecodeError:
             continue
-        if isinstance(parsed, dict):
-            return parsed, None
-        # 顶层不是对象（例如模型直接输出了数组）：包一层，让上层拿到确定的结构
-        return {"value": parsed}, None
-
-    repaired = _repair_json(text)
-    if repaired is not None:
-        return repaired, None
+        if isinstance(loaded, list):
+            return {"value": loaded}, None
 
     logger.debug("工具参数无法解析为 JSON：%r", raw[:200])
     return None, raw
 
 
-def _strip_fence(text: str) -> str:
+#: Markdown 代码围栏（仅用于取出围栏内的裸 JSON，供数组分支使用）。
+_FENCE_RE = re.compile(r"```(?:json|JSON)?\s*(.*?)```", re.DOTALL)
+
+
+def _plain_candidates(raw: str) -> list[str]:
+    """返回可直接交给 ``json.loads`` 的候选串（含围栏内内容）。"""
+    text = strip_reasoning_tags(raw).strip()
     match = _FENCE_RE.search(text)
-    return match.group(1).strip() if match else ""
-
-
-#: 常见畸形 JSON 的修复规则，按顺序应用。
-_REPAIR_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r",\s*([}\]])"), r"\1"),  # 尾逗号
-    (re.compile(r"([{,]\s*)([A-Za-z_]\w*)\s*:"), r'\1"\2":'),  # 无引号的键
-    (re.compile(r"[\u201c\u201d]"), '"'),  # 中文引号
-    (re.compile(r"[\u2018\u2019]"), "'"),
-)
-
-
-def _repair_json(text: str) -> dict[str, Any] | None:
-    """对常见畸形 JSON 做规则化修复后再试一次。
-
-    修复规则刻意保持**保守**：只在能明确判断意图时改写，不尝试猜测截断内容——
-    猜测会产出"看起来解析成功但内容是错的"结果，比明确失败更危险。
-    """
-    candidate = text
-    for pattern, replacement in _REPAIR_RULES:
-        candidate = pattern.sub(replacement, candidate)
-    candidate = extract_balanced_json_object(candidate) or candidate
-    try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return [text, match.group(1).strip() if match else ""]
 
 
 def parse_tool_calls(raw_tool_calls: Any) -> tuple[ToolCall, ...]:

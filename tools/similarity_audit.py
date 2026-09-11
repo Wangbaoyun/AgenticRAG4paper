@@ -40,6 +40,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import builtins
+import keyword
+import math
 import bisect
 import difflib
 import fnmatch
@@ -75,6 +78,34 @@ DEFAULT_MIN_MATCHED_CHARS: int = 32
 #: 一个 94 个 n-gram 的小模块，只要十来个通用 token 序列重合就会算出 13% 的
 #: containment——这是小样本方差，不是复制证据。首轮审计即被此效应误报。
 SMALL_FILE_NGRAMS: int = 300
+
+#: 标识符切分（用于文档频率统计与区分性判据）。
+IDENTIFIER_RE = re.compile(r"[A-Za-z_]\w*")
+
+#: 完整形如 URL 的字符串。第三方服务的 API 端点由服务方规定，
+#: 使用该服务就必须使用它的 URL——属于事实性标识符，不含作者表达。
+#: 只豁免**整个字符串就是一个 URL** 的情形：含 URL 的长文本仍走常规比对。
+URL_LITERAL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+#: 字面量字符串切分（粗略但足够：单双引号成对）。
+STRING_LITERAL_RE = re.compile(r"\"([^\"\\]|\\.)*\"|'([^'\\]|\\.)*'")
+
+#: 判定"通用标识符"的**文档频率**阈值。
+#:
+#: 在超过该比例的上游文件中出现过的标识符，视为 Python 生态的通用词汇
+#: （``self`` 53%、``len`` 64%、``response`` 40%、``settings`` 36%、``result`` 31%…），
+#: 它们由语言习惯或领域通用语决定，不承载作者的命名选择。
+#:
+#: 这是把逐行检查从"白名单"改为"区分性内容"判据的关键：
+#: 白名单方法不收敛——Python 的规范写法是开放集合，每轮审计都能找到新的
+#: "显然通用但未被规则覆盖"的行（本项目实测连续三轮各 4/22/15 行）。
+#: 文档频率是信息检索里的标准做法（MOSS/JPlag 一类系统用它压制趋同噪声），
+#: 且它**直接指向真正的信号**：复制会带来上游的**特征标识符**
+#: （``citation_regex`` 1.7%、``ptext`` 1.7%、``similarity_search`` 3.4%）。
+#:
+#: 阈值 10% 由实测确定：本项目全部误报行的标识符 DF ≥ 22%，
+#: 而植入复制样本的标识符 DF ≤ 7%，两者之间有很宽的安全间隔。
+COMMON_IDENTIFIER_DF: float = 0.10
 
 #: 独立性守卫工具的自声明标记。文件前 20 行含此标记者，
 #: 从「依赖审计」「专有标识符」两项中豁免（理由见 :func:`is_audit_tooling`）。
@@ -697,6 +728,63 @@ class StringPair:
     violation: bool
 
 
+def normalize_for_comparison(value: str) -> str:
+    """把结构化输出串归一化为"只比较内容，不比较骨架"的形式。
+
+    **为什么需要这一步**：本项目与参考实现都会要求模型返回
+    ``{"summary": ..., "relevance_score": N}`` 这样的结构化结果，因此
+    测试夹具里必然出现大量同形的 JSON 骨架。原始字符串比对会把这种
+    **由接口定义决定的骨架**算成高相似度，而那些字段名是本项目自己的
+    提示词与规格定义的（见 docs/SPEC.md §3.7），不是从别处抄来的。
+
+    与"使用第三方 API 就必须使用它的 URL"同理：要测试一个结构化输出接口，
+    就必须使用该接口的字段名，作者在骨架层面没有表达空间。
+
+    归一化步骤（只影响**比较**，报告仍展示原文）：
+
+    1. 剥离推理标签与 Markdown 代码围栏——它们同样是接口约定的一部分；
+    2. 若剩余部分能解析为 JSON 对象，则取其**值的拼接**作为比较对象。
+
+    保留值而非键，是因为**值**才是夹具作者实际写下的内容：
+    若连值也被复制，归一化后依然高度相似，检测能力不受影响。
+    """
+    import json as _json
+
+    text = _REASONING_TAG_RE.sub("", value).strip()
+    fenced = _FENCE_RE_FOR_STRINGS.search(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    try:
+        parsed = _json.loads(text)
+    except (ValueError, TypeError):
+        return value
+    if not isinstance(parsed, dict):
+        return value
+    return " \u0001 ".join(_flatten_json_values(parsed))
+
+
+def _flatten_json_values(node: Any) -> list[str]:
+    """递归收集 JSON 结构中的所有标量值（按键名排序以保证确定性）。"""
+    if isinstance(node, dict):
+        collected: list[str] = []
+        for key in sorted(node):
+            collected.extend(_flatten_json_values(node[key]))
+        return collected
+    if isinstance(node, list):
+        collected = []
+        for item in node:
+            collected.extend(_flatten_json_values(item))
+        return collected
+    return [str(node)]
+
+
+#: 用于在字符串比对前剥离代码围栏。
+_FENCE_RE_FOR_STRINGS = re.compile(r"```(?:json|JSON)?\s*(.*?)```", re.DOTALL)
+
+#: 用于在字符串比对前剥离推理标签。
+_REASONING_TAG_RE = re.compile(r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE)
+
+
 def best_string_matches(
     target_strings: Sequence[tuple[str, str, int]],
     reference_strings: Sequence[tuple[str, str, int]],
@@ -732,6 +820,11 @@ def best_string_matches(
         size = len(value)
         if size < MIN_STRING_LENGTH:
             continue
+        # 整个字符串就是一个 URL → 第三方服务规定的端点，属事实性标识符。
+        # 使用 Crossref/OpenAlex 的 API 就必须使用它们的 URL，作者没有表达空间。
+        # 只豁免"整个串是 URL"的情形：含 URL 的长文本照常参与比对。
+        if URL_LITERAL_RE.match(value.strip()):
+            continue
         low = bisect.bisect_left(lengths, max(1, int(size * threshold / (2 - threshold)) - 1))
         high = bisect.bisect_right(lengths, int(size * (2 - threshold) / threshold) + 1)
         candidates = ordered[low:high] if high > low else ordered
@@ -740,7 +833,10 @@ def best_string_matches(
         best_matched = 0
         violating = False
         for ref in candidates:
-            matcher = difflib.SequenceMatcher(None, value, ref[1], autojunk=False)
+            matcher = difflib.SequenceMatcher(
+                None, normalize_for_comparison(value), normalize_for_comparison(ref[1]),
+                autojunk=False,
+            )
             ceiling = matcher.real_quick_ratio()
             if ceiling <= best_ratio and ceiling < threshold:
                 continue
@@ -771,7 +867,19 @@ def best_string_matches(
             )
         )
 
-    results.sort(key=lambda item: (-item.ratio, -item.matched, item.target[0], item.target[2]))
+    # **违规项优先展示**：本表按相似度排序后会被截断到 top_n，
+    # 而"违规"的判据是相似度 **且** 实际匹配字符数 ≥ 阈值——两者不是同一个排序键。
+    # 早先只按相似度排序，出现过"计数说有 3 条违规、表里一条都看不到"的报告缺陷：
+    # 一个失败的检查项如果不在报告里指出失败在哪，这个报告就是不可用的。
+    results.sort(
+        key=lambda item: (
+            not item.violation,
+            -item.ratio,
+            -item.matched,
+            item.target[0],
+            item.target[2],
+        )
+    )
     return results[:top_n], len(target_strings), threshold_hits, violations
 
 
@@ -1019,11 +1127,69 @@ class LineOutcome:
     details: list[str]
 
 
-def classify_line(stripped: str) -> str:
-    """把一行代码归入 样板 / 通用惯用式 / 实质性 三档。"""
+def collect_common_identifiers(reference_files: Sequence[RefFile]) -> frozenset[str]:
+    """统计上游语料中"通用标识符"的集合（文档频率 ≥ :data:`COMMON_IDENTIFIER_DF`）。
+
+    同时无条件收录 Python 关键字与内置名——它们在任何语料里都是通用的，
+    而小语料上算出的文档频率并不可靠。
+    """
+    document_frequency: dict[str, int] = {}
+    files = 0
+    for ref in reference_files:
+        if ref.text is None or PurePosixPath(ref.rel).suffix not in PY_SUFFIXES:
+            continue
+        files += 1
+        for name in set(IDENTIFIER_RE.findall(ref.text)):
+            document_frequency[name] = document_frequency.get(name, 0) + 1
+
+    common = set(keyword.kwlist) | set(keyword.softkwlist) | set(dir(builtins))
+    if files:
+        threshold = max(1, math.ceil(files * COMMON_IDENTIFIER_DF))
+        common |= {name for name, count in document_frequency.items() if count >= threshold}
+    return frozenset(common)
+
+
+def has_distinctive_content(stripped: str, common_identifiers: frozenset[str]) -> bool:
+    """这一行是否含有**承载作者选择**的内容。
+
+    两类才算：
+
+    1. 至少一个**非通用**标识符（命名选择）；
+    2. 至少一个字面量字符串达到 :data:`MIN_STRING_LENGTH`（措辞选择）。
+
+    只有形如 ``assert len(result) == 1``、``self.settings = settings`` 这样
+    完全由通用词汇与语法构成的行才被判为无区分性。这条判据把检查对准了
+    真正的信号——**复制会带来上游的特征标识符**，而趋同只会带来通用词。
+    """
+    # 先把字面量字符串整体替换掉再取标识符：字符串**内部**的文本是字面量内容，
+    # 不是标识符。不剥离会重复计数，而且会绕过字符串检查项更细致的判据
+    # （相似度比例 + 实际匹配字符数），把"CSV 列名"这类第三方数据格式的字段名
+    # 误判成命名选择。
+    without_literals = STRING_LITERAL_RE.sub('""', stripped)
+    for name in IDENTIFIER_RE.findall(without_literals):
+        if len(name) > 2 and name not in common_identifiers:
+            return True
+    # 长字面量由字符串检查项负责判定，这里只做"存在即视为有内容"的粗筛
+    return any(
+        len(match.group(0)) - 2 >= MIN_STRING_LENGTH
+        for match in STRING_LITERAL_RE.finditer(stripped)
+    )
+
+
+def classify_line(stripped: str, common_identifiers: frozenset[str] = frozenset()) -> str:
+    """把一行代码归入 样板 / 通用惯用式 / 实质性 三档。
+
+    Args:
+        stripped: 去掉首尾空白后的行内容。
+        common_identifiers: 上游语料中的通用标识符集合。传入空集合时退化为
+            只按 :data:`BOILERPLATE_LINE_RE` 与 :data:`GENERIC_IDIOM_RES` 判断。
+    """
     if BOILERPLATE_LINE_RE.match(stripped):
         return TIER_BOILERPLATE
     if any(pattern.match(stripped) for pattern in GENERIC_IDIOM_RES):
+        return TIER_GENERIC
+    # 没有任何"作者做过选择"的痕迹 → 这一行不可能是表达层面的复制证据
+    if common_identifiers and not has_distinctive_content(stripped, common_identifiers):
         return TIER_GENERIC
     return TIER_SUBSTANTIVE
 
@@ -1076,6 +1242,8 @@ def run_line_check(
     * 实质性逐字相同行数 > ``max_copied_lines``；
     * 存在长度 ≥ ``min_copied_block`` 的"行号同步递增"对齐片段（整块搬运的强证据）。
     """
+
+    common_identifiers = collect_common_identifiers(reference_files)
     index: dict[str, list[tuple[str, int]]] = {}
     for ref in reference_files:
         if ref.text is None or PurePosixPath(ref.rel).suffix not in PY_SUFFIXES:
@@ -1108,7 +1276,7 @@ def run_line_check(
                         target_rel=target.rel,
                         target_line=lineno,
                         text=stripped,
-                        tier=classify_line(stripped),
+                        tier=classify_line(stripped, common_identifiers),
                         occurrences=list(occurrences),
                     )
                 )

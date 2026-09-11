@@ -265,3 +265,46 @@ class FakeScreener:
 
     async def aclose(self) -> None:
         return None
+
+
+class FakeLLMClient:
+    """按脚本返回内容的 LLM 替身。
+
+    刻意支持"按调用顺序返回不同内容"：筛选的容错逻辑必须能在**同一批**
+    里同时覆盖正常、畸形、异常三种情况，否则测不出"单条失败不影响整批"。
+    """
+
+    def __init__(
+        self,
+        responses: list[str] | None = None,
+        *,
+        default: str = '{"summary": "默认摘要", "relevance_score": 5}',
+        error: Exception | None = None,
+        cost_per_call: float = 0.001,
+    ) -> None:
+        self._responses = list(responses or [])
+        self._default = default
+        self._error = error
+        self._cost = cost_per_call
+        self.calls: list[list] = []
+        self.kwargs: list[dict] = []
+
+    @property
+    def model_name(self) -> str:
+        return "fake-llm"
+
+    async def complete(self, messages, **kwargs):
+        from scitrace.ports import LLMResponse
+
+        self.calls.append(list(messages))
+        self.kwargs.append(dict(kwargs))
+        if self._error is not None:
+            raise self._error
+        content = self._responses.pop(0) if self._responses else self._default
+        return LLMResponse(
+            content=content,
+            model=self.model_name,
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=self._cost,
+        )
