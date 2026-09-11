@@ -226,13 +226,24 @@ class TestFragment:
             )
 
     def test_fragment_id_is_deterministic_and_positional(self) -> None:
-        args = {"source_key": "s", "section_path": ["1 Intro"], "chunk_index": 0}
+        args = {"source_key": "s", "document_hash": "h", "section_path": ["1 Intro"], "chunk_index": 0}
         assert make_fragment_id(**args) == make_fragment_id(**args)
         assert make_fragment_id(**args) != make_fragment_id(
-            source_key="s", section_path=["1 Intro"], chunk_index=1
+            source_key="s", document_hash="h", section_path=["1 Intro"], chunk_index=1
         )
         assert make_fragment_id(**args) != make_fragment_id(
-            source_key="s", section_path=["2 Method"], chunk_index=0
+            source_key="s", document_hash="h", section_path=["2 Method"], chunk_index=0
+        )
+
+    def test_fragment_id_varies_with_document_content(self) -> None:
+        """同 DOI 的两个文件（预印本 / 正式版）版本号不同、内容不同，
+
+        若不把内容哈希纳入 id，两者会派生出**相同**的片段 id 而互相覆盖，
+        索引里就会留下一个来源混杂的文档。
+        """
+        base = {"source_key": "same-doi-key", "section_path": ["1 Intro"], "chunk_index": 0}
+        assert make_fragment_id(**base, document_hash="version-a") != make_fragment_id(
+            **base, document_hash="version-b"
         )
 
     def test_parsed_document_helpers(self) -> None:

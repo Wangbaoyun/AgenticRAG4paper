@@ -19,14 +19,34 @@ from scitrace.util.hashing import derive_key, normalize_text
 __all__ = ["Fragment", "ParsedDocument", "ParsedPage", "make_fragment_id"]
 
 
-def make_fragment_id(*, source_key: SourceKey, section_path: list[str], chunk_index: int) -> str:
+def make_fragment_id(
+    *,
+    source_key: SourceKey,
+    document_hash: str,
+    section_path: list[str],
+    chunk_index: int,
+) -> str:
     """派生片段的确定性 id。
 
-    组成：``source_key`` + 章节路径 + 块序号。**不含文本内容**——这样
-    "同一位置被重新切分"会得到不同的 ``chunk_index`` 而自然区分，
-    同时"重新解析同一篇论文得到相同分块"会得到相同 id，使增量索引可以按 id 去重。
+    组成：``source_key`` + **文档内容哈希** + 章节路径 + 块序号。
+
+    ## 为什么必须包含内容哈希
+
+    最初的实现只用了 ``source_key + section_path + chunk_index``，理由是
+    "同一位置重新切分会得到不同 chunk_index，同一篇论文重新解析会得到相同 id"。
+    这个推理漏掉了两种真实情形：
+
+    1. **同一 DOI、不同文件**（预印本与正式版同属一个 ``source_key``）：
+       两者的 ``(section_path, chunk_index)`` 序列高度相似，会产生**相同 id**，
+       于是后摄入的那份覆盖前一份——索引里留下一个来源混杂的文档；
+    2. **同一 DOI、内容被修订**（用户替换了勘误后的 PDF）：``source_key`` 不变，
+       id 也不变，索引里的旧片段不会被识别为陈旧内容。
+
+    加入内容哈希后：内容相同的重新解析仍得到相同 id（幂等去重能力保留），
+    内容不同则必然得到不同 id（不再碰撞）。代价是"内容变化后必须显式清理旧片段"，
+    这由 ``pipeline.ingest`` 按 ``source_key`` 移除来完成。
     """
-    return derive_key(source_key, "/".join(section_path), str(chunk_index))
+    return derive_key(source_key, document_hash, "/".join(section_path), str(chunk_index))
 
 
 class ParsedPage(BaseModel):

@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 
 from scitrace.domain import SourcePatch
 
-__all__ = ["MetadataProvider"]
+__all__ = ["MetadataProvider", "MetadataResolver"]
 
 
 @runtime_checkable
@@ -54,4 +54,38 @@ class MetadataProvider(Protocol):
 
     async def aclose(self) -> None:
         """释放连接等资源。未持有资源时可为空实现。"""
+        ...
+
+
+@runtime_checkable
+class MetadataResolver(Protocol):
+    """多个 :class:`MetadataProvider` 的组合与合并。
+
+    与 provider 的分工：provider 只回答"我知道什么"，resolver 负责
+    **按优先级合并、处理降级、并保证不覆盖已有非空字段**（SPEC §3.5）。
+
+    单独抽出这一层，是因为合并策略是有状态、有顺序、需要单测的逻辑，
+    把它塞进每个 provider 会让 N 个数据源产生 N 份略有差异的合并实现。
+    """
+
+    @property
+    def name(self) -> str:
+        """组合器标识，用于日志与 ``Source.metadata_sources`` 的来源说明。"""
+        ...
+
+    async def enrich(self, patch: SourcePatch) -> SourcePatch:
+        """用全部已注册的 provider 补全给定补丁。
+
+        Args:
+            patch: 已知线索（通常含 DOI、标题、年份）。实现**不应**修改它。
+
+        Returns:
+            合并后的补丁。**并发**执行各 provider，按配置的优先级顺序依次
+            ``fill_gaps_from``；任一 provider 失败或超时都只降级为"该来源无贡献"，
+            不影响其他来源，也不抛出异常（SPEC §3.5 降级要求）。
+        """
+        ...
+
+    async def aclose(self) -> None:
+        """释放全部 provider 持有的资源。"""
         ...

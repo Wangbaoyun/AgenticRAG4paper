@@ -128,6 +128,13 @@ FullTextIndex          VectorIndex          （共享 IndexFingerprint 目录）
   - `status == failed` → 本次重试（即使 hash 未变）。
 - **原子性**：单文件失败不得影响其他文件；失败写入 `status=failed` + `error` 后继续。
   全部失败时命令退出码为 1。
+- **旧片段清理**：`hash` 变化时**必须**先按 `source_key` 移除该文件的旧片段再写入新片段
+  （因 `fragment_id` 含内容哈希，旧 id 不会被新片段覆盖）。
+  **例外**：若另一个清单项共享同一个 `source_key`（同一 DOI 的预印本与正式版），
+  则跳过清理——`remove(source_key)` 会连对方的片段一起删除。
+  代价是该文件自己的旧片段可能残留。这是**已知且刻意接受的取舍**：
+  索引的删除单位是 `source_key`，要做到文件级精确删除需端口支持按 `fragment_id` 删除。
+  共用 `source_key` 的情形会计入 `report.duplicate_sources` 并在 CLI 中提示用户。
 
 ### 3.2 分块（Chunking）
 
@@ -150,8 +157,16 @@ FullTextIndex          VectorIndex          （共享 IndexFingerprint 目录）
 | `overlap_chars` | 200 | 超长切分时的句级重叠 |
 | `drop_references` | `true` | 丢弃文末参考文献列表区块（避免引用噪声） |
 
-每个 `Fragment` 记录：`fragment_id`（`sha256(source_key + section_path + chunk_index)[:16]`）、
+每个 `Fragment` 记录：`fragment_id`（`sha256(source_key + document_hash + section_path + chunk_index)[:16]`）、
 `source_key`、`text`、`chunk_index`、`page_range`、`section_path`、`char_count`、`media=[]`。
+
+> **v1.1 变更**：`fragment_id` 原先不含 `document_hash`，理由是"同一位置重新切分会得到不同
+> `chunk_index`，同一篇论文重新解析会得到相同 id"。该推理漏掉两种真实情形：
+> ① 同一 DOI 的两个文件（预印本 / 正式版）共享 `source_key`，其 `(section_path, chunk_index)`
+> 序列高度相似，会产生**相同 id** 而互相覆盖，索引里留下来源混杂的文档；
+> ② 同一 DOI 而内容被修订（用户替换勘误版 PDF）时 `source_key` 不变，旧片段不会被识别为陈旧。
+> 加入内容哈希后，内容相同仍得到相同 id（幂等去重能力保留），内容不同则必然不同。
+> 代价是"内容变化后须显式清理旧片段"，由 §3.1 的摄入流程按 `source_key` 移除来完成。
 
 ### 3.3 向量化（Embedding）
 
@@ -490,3 +505,11 @@ IndexFingerprint = sha256(canonical_json({
 4. 同步更新对应 `tests/conformance/` 契约 → 5. 重跑审计 → 6. 提交。
 
 冻结的意义在于：实现阶段的偏差由**测试**暴露，而不是由"边写边改规格"掩盖。
+
+### 修订记录
+
+| 版本 | 变更 | 理由 |
+| --- | --- | --- |
+| v1 | 初稿 | — |
+| v1.1 | §5.3 索引指纹**移除** `source_dirs` | 原设计会导致 `stc index ./papers` 后 `stc ask`（不带路径）因指纹不同而报"索引不存在"。更根本的是概念错位：索引同一性应由"文本如何被表示"决定，而非"这次索引了哪些目录" |
+| v1.2 | §3.2 `fragment_id` **加入** `document_hash`；§3.1 摄入流程相应改为按 `source_key` 显式清理旧片段 | 见 §3.2 的变更说明 |
