@@ -19,9 +19,11 @@ from scitrace.adapters.llm.convert import (
 )
 from scitrace.adapters.llm.embedding import LocalEmbeddingClient, OpenAIEmbeddingClient
 from scitrace.adapters.llm.litellm_client import LiteLLMClient
+from scitrace.adapters.llm.reranker import CrossEncoderReranker
 from scitrace.adapters.llm.retry import RetryPolicy, is_retryable_error
 
 __all__ = [
+    "CrossEncoderReranker",
     "LiteLLMClient",
     "LocalEmbeddingClient",
     "OpenAIEmbeddingClient",

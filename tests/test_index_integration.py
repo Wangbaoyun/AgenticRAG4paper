@@ -17,6 +17,7 @@ from fakes import FakeEmbedder
 from pdf_fixture import write_text_pdf
 from scitrace.adapters.indexes import NumpyVectorIndex, TantivyFullTextIndex
 from scitrace.config import ChunkingSettings
+from scitrace.adapters.parsers import select_parser
 from scitrace.pipeline.ingest import IngestPipeline
 
 EMBED_DIM = 16
@@ -35,6 +36,7 @@ class RealHarness:
         self.embedder = FakeEmbedder(dimension=EMBED_DIM)
         self.pipeline = IngestPipeline(
             index_dir=self.index_dir,
+            parser_resolver=select_parser,
             chunking=ChunkingSettings(target_chars=400, max_chars=800, min_chars=0),
             vector_index=self.vector,
             fulltext_index=self.fulltext,

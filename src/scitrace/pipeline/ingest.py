@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,7 +26,6 @@ import anyio
 from pydantic import BaseModel, ConfigDict, Field
 
 from scitrace import SCHEMA_VERSION
-from scitrace.adapters.parsers import select_parser
 from scitrace.config import ChunkingSettings
 from scitrace.domain import Fragment, Source, SourcePatch, make_source_key
 from scitrace.pipeline.chunking import chunk_document
@@ -208,7 +207,7 @@ class IngestPipeline:
         *,
         index_dir: Path,
         chunking: ChunkingSettings | None = None,
-        parser_name: str | None = None,
+        parser_resolver: Callable[[Path], DocumentParser] | None = None,
         vector_index: VectorIndex | None = None,
         fulltext_index: FullTextIndex | None = None,
         embedder: EmbeddingClient | None = None,
@@ -218,7 +217,7 @@ class IngestPipeline:
     ) -> None:
         self.index_dir = Path(index_dir)
         self.chunking = chunking or ChunkingSettings()
-        self.parser_name = parser_name
+        self.parser_resolver = parser_resolver
         self.vector_index = vector_index
         self.fulltext_index = fulltext_index
         self.embedder = embedder
@@ -274,10 +273,19 @@ class IngestPipeline:
 
     # -------------------------------------------------------------- 单文件 --
 
-    async def _parse_one(self, path: Path) -> DocumentParser:
-        """选择解析器并解析。"""
-        parser = select_parser(path, preferred=self.parser_name)
-        return parser
+    def _resolve_parser(self, path: Path) -> DocumentParser:
+        """为该文件解析出一个解析器。
+
+        **解析器由外部注入**，本模块不 import 任何适配器——这是"pipeline 只依赖
+        domain/ports/util"这条架构约束的一部分（``tests/test_layering.py`` 会机械校验）。
+        注入点由装配层提供，因此"用哪个解析后端"仍然只在一处决定。
+        """
+        if self.parser_resolver is None:
+            raise ValueError(
+                f"未注入解析器解析函数，无法处理 {path.name}。"
+                "请在装配层（scitrace.factory）传入 parser_resolver。"
+            )
+        return self.parser_resolver(path)
 
     async def ingest_file(self, path: Path, *, identifier: str, digest: str) -> tuple[Source, list[Fragment]]:
         """解析、补全元数据、分块，返回文献与片段。
@@ -291,8 +299,7 @@ class IngestPipeline:
             ParseError: 解析失败。由调用方捕获并记为 ``status=failed``。
             ValueError: 没有解析器能处理该文件。
         """
-        parser = await self._parse_one(path)
-        document = await parser.parse(path)
+        document = await self._resolve_parser(path).parse(path)
 
         hints = document.hints
         first_page = document.pages[0].text if document.pages else ""

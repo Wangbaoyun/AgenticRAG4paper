@@ -16,6 +16,7 @@ from fakes import FakeEmbedder, FakeFullTextIndex, FakeResolver, FakeVectorIndex
 from pdf_fixture import write_text_pdf
 from scitrace import SCHEMA_VERSION
 from scitrace.domain import SourcePatch
+from scitrace.adapters.parsers import select_parser
 from scitrace.pipeline.ingest import (
     IngestPipeline,
     IngestReport,
@@ -41,6 +42,7 @@ class Harness:
         self.resolver = FakeResolver()
         self.pipeline = IngestPipeline(
             index_dir=self.index_dir,
+            parser_resolver=select_parser,
             vector_index=self.vector,
             fulltext_index=self.fulltext,
             embedder=self.embedder,
