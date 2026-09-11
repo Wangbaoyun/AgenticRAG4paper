@@ -37,6 +37,7 @@ from scitrace.adapters.metadata import (
 )
 from scitrace.config import LLMRole, Settings
 from scitrace.domain import Source
+from scitrace.domain.session import Usage
 from scitrace.pipeline.retrieval import Retriever
 from scitrace.pipeline.screening import CrossEncoderScreener, LLMScreener
 from scitrace.pipeline.synthesis import AnswerSynthesizer
@@ -78,11 +79,18 @@ class Services:
     screener: EvidenceScreener | None = None
     synthesizer: AnswerSynthesizer | None = None
     sources: dict[str, Source] = field(default_factory=dict)
+    #: 一次问答的**累计**用量。筛选器与合成器各自只知道自己那部分，
+    #: 由这里统一累加——成本可观测（增量 ④）要求汇总口径只有一处。
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def index_dir(self) -> Path:
         """当前配置对应的索引目录。"""
         return self.settings.index_dir
+
+    def merge_usage(self, other: Usage) -> None:
+        """把某个部件的用量并入会话累计。"""
+        self.usage = self.usage.merge(other)
 
     def llm(self, role: LLMRole = "main") -> LLMClient:
         """取某个角色的 LLM 客户端。"""
