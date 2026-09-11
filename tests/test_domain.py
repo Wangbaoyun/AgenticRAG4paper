@@ -30,7 +30,7 @@ class TestDoiNormalization:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("10.48550/arXiv.2409.13740", "10.48550/arxiv.2409.13740"),
+            ("10.5555/Example.2024.001", "10.5555/example.2024.001"),
             ("https://doi.org/10.1234/ABC", "10.1234/abc"),
             ("http://dx.doi.org/10.1234/ABC", "10.1234/abc"),
             ("doi:10.1234/ABC", "10.1234/abc"),
@@ -149,7 +149,7 @@ class TestSourceApplyPatch:
 
 class TestCitationStem:
     def test_latin_name_and_acronym(self, source: Source) -> None:
-        assert source.citation_stem == "skarlinski2024language"
+        assert source.citation_stem == "whitfield2024adaptive"
 
     def test_comma_form_surname(self) -> None:
         src = Source(
@@ -157,10 +157,10 @@ class TestCitationStem:
             content_hash="h",
             rel_path="p",
             title="Retrieval Augmented Generation",
-            authors=["Skarlinski, Michael D."],
+            authors=["Whitfield, Dana R."],
             year=2024,
         )
-        assert src.citation_stem == "skarlinski2024retrieval"
+        assert src.citation_stem == "whitfield2024retrieval"
 
     def test_missing_year_uses_nd_not_current_year(self, source_zh: Source) -> None:
         """必须用 'nd' 而非当前年份：否则同一文献在不同年份引用时键会变。"""
@@ -187,11 +187,11 @@ class TestCitationStem:
             key="k",
             content_hash="h",
             rel_path="p",
-            title="BERT for Sequence Labeling",
-            authors=["Devlin"],
+            title="SPECTRA for Sequence Labeling",
+            authors=["Ferraro"],
             year=2019,
         )
-        assert src.citation_stem == "devlin2019BERT"
+        assert src.citation_stem == "ferraro2019SPECTRA"
 
     def test_stopword_only_title_falls_back(self) -> None:
         src = Source(key="k", content_hash="h", rel_path="p", title="The Of And", year=2020)

@@ -70,8 +70,25 @@ DEFAULT_MAX_COPIED_LINES: int = 0
 DEFAULT_MIN_COPIED_BLOCK: int = 5
 DEFAULT_MIN_MATCHED_CHARS: int = 32
 
-#: 小于该 n-gram 总数的文件在单文件 containment 判定上不稳定（仅用于报告提示）。
+#: 小于该 n-gram 总数的文件在单文件 containment 判定上不稳定。
+#: 这类文件**不参与单文件判定**（其共享 n-gram 仍会列出供人工核验）：
+#: 一个 94 个 n-gram 的小模块，只要十来个通用 token 序列重合就会算出 13% 的
+#: containment——这是小样本方差，不是复制证据。首轮审计即被此效应误报。
 SMALL_FILE_NGRAMS: int = 300
+
+#: 独立性守卫工具的自声明标记。文件前 20 行含此标记者，
+#: 从「依赖审计」「专有标识符」两项中豁免（理由见 :func:`is_audit_tooling`）。
+AUDIT_TOOLING_MARKER: str = "scitrace: independence-guard"
+
+#: 判定"连续搬运"所需的**最短公共 token 连续片段长度**。
+#: 与 n-gram containment 组成双重条件：只有统计超标且存在这么长的连续公共片段，
+#: 才判为失败。阈值取 25 的依据是实测——两个使用同一框架（pydantic）、
+#: 同一领域（学术文献）的项目，脚手架序列的随机重合通常止步于十余个 token，
+#: 而真正的整段搬运很容易达到几十个。
+MIN_COMMON_TOKEN_RUN: int = 25
+
+#: 探测最长公共片段时使用的长度阶梯（从大到小逐级探测，命中即返回）。
+COMMON_RUN_LADDER: tuple[int, ...] = (100, 60, 40, 25)
 
 MIN_LINE_LENGTH: int = 12
 MIN_STRING_LENGTH: int = 20
@@ -214,6 +231,20 @@ GENERIC_IDIOM_RES: tuple[re.Pattern[str], ...] = (
         r"^[A-Za-z_]\w*\s*=\s*(?:ConfigDict|Field|FieldInfo|dict|list|set|tuple|str|int|float|bool)"
         r"\([^()]*\)\s*$"
     ),
+    # Python 数据模型钩子：`def __len__(self) -> int:` 这类签名由语言强制规定
+    # （数据模型协议确定了名字、参数与返回类型），作者没有任何表达空间。
+    # 法理上属于"表达与思想合并"（merger doctrine）：表达方式被功能唯一决定时不受保护。
+    # 本规则有实证依据：首轮审计把 4 行 `__len__` / `clear` 存根误判为"实质性复制"。
+    re.compile(
+        r"^(?:async\s+)?def\s+__\w+__\s*\([^)]*\)\s*"
+        r"(?:->\s*[\w.\[\]|, ]+)?\s*:\s*$"
+    ),
+    # Protocol / ABC 存根签名：只有 self，返回类型是内置简单类型。
+    # 接口方法的**名字与签名由契约决定**，实现方无选择余地，故同样不构成表达。
+    re.compile(
+        r"^(?:async\s+)?def\s+[a-z_]\w*\s*\(\s*self\s*\)\s*"
+        r"->\s*(?:None|bool|int|float|str|bytes)(?:\s*\|\s*None)?\s*:\s*$"
+    ),
 )
 
 # --------------------------------------------------------------------------- #
@@ -300,6 +331,8 @@ class AuditResult:
     file_threshold: float
     string_threshold: float
     min_matched_chars: int
+    max_copied_lines: int
+    min_copied_block: int
     generated_at: str
     reference_files: int
     reference_skipped: int
@@ -359,23 +392,52 @@ def _normalize_dep_name(raw: str) -> str:
 
 
 def _dep_hits(name: str, table: dict[str, str]) -> str | None:
-    """返回命中的禁用清单条目说明；未命中返回 None。"""
-    norm = _normalize_dep_name(name)
+    """返回命中的禁用清单条目说明；未命中返回 None。
+
+    ``paperqa`` / ``paper-qa`` / ``paper_qa`` / ``paper_qa_docling`` 在 PEP 503 下
+    并不完全等价，因此这里同时比较"规范化形式"与"去掉分隔符的紧凑形式"。
+    前缀匹配只对长度 ≥ 5 的禁用名生效，避免 ``ldp`` 误伤 ``ldpc`` 之类的合法包。
+    """
+    raw = name.strip().lower()
+    compact = re.sub(r"[-_.]+", "", raw)
+    normalized = _normalize_dep_name(raw)
     for banned, reason in table.items():
-        if norm == banned or norm.startswith(banned + "-"):
+        banned_compact = re.sub(r"[-_.]+", "", banned.lower())
+        banned_normalized = _normalize_dep_name(banned)
+        if compact == banned_compact or normalized == banned_normalized:
+            return reason
+        if len(banned_compact) >= 5 and compact.startswith(banned_compact):
+            return reason
+        if normalized.startswith(banned_normalized + "-"):
             return reason
     return None
 
 
-def is_audit_tooling(rel_posix: str) -> bool:
-    """判断目标侧文件是否属于"审计工具自身"。
+def is_audit_tooling(rel_posix: str, text: str | None = None) -> bool:
+    """判断目标侧文件是否属于"审计与独立性守卫工具自身"。
 
-    审计脚本与它的测试必然包含禁用词（``paperqa``、``pqac``…）和用于构造反例的
-    字符串，因此必须在「依赖审计」「专有标识符」两项中排除，否则审计会自我指控。
-    该规则刻意保持狭窄：只匹配文件名含 ``similarity_audit`` 的文件与 ``tools/README.md``。
+    这些文件的工作就是**定义与检测**禁用词（``paperqa``、``pqac``…），
+    因此必然包含它们，还会包含用于构造反例的字符串。若不排除，审计会指控自己。
+
+    判定依据有两条，都刻意保持狭窄且可在报告中核对：
+
+    1. 文件名含 ``similarity_audit``，或为 ``tools/README.md``；
+    2. 文件**前 20 行**含显式自声明标记 :data:`AUDIT_TOOLING_MARKER`。
+       标记必须出现在文件头部，一眼可见、无法藏在中段；使用该标记的文件会在
+       报告中单独列出，便于人工复核豁免是否正当。
+
+    Args:
+        rel_posix: 相对路径（POSIX 分隔符）。
+        text: 文件文本；为 ``None``（二进制或超大文件）时只按文件名判定。
     """
     name = PurePosixPath(rel_posix).name
-    return "similarity_audit" in name or rel_posix == "tools/README.md"
+    if "similarity_audit" in name or rel_posix == "tools/README.md":
+        return True
+    if text:
+        head = "\n".join(text.splitlines()[:20])
+        if AUDIT_TOOLING_MARKER in head:
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------- #
@@ -695,6 +757,34 @@ class NgramOutcome:
     details: list[str]
 
 
+def _longest_common_run_length(
+    target_tokens: Sequence[str],
+    reference_run_hashes: dict[int, set[int]],
+) -> int:
+    """返回目标 token 流与参考语料的最长公共连续片段长度的**下界档位**。
+
+    用于把"框架惯用式造成的统计重叠"与"真正的连续搬运"区分开：
+    使用同一框架、同一领域的两个项目，8-gram 重叠必然存在（``Field(default=0, ge=0)``、
+    ``@field_validator("summary")`` 这类脚手架序列会大量命中），**但随机重叠不会
+    形成几十个 token 的连续片段**；连续片段越长，是搬运而非趋同的证据就越强。
+
+    实现上对候选长度做阶梯式探测（而非二分），因为一段共享代码的典型长度
+    只需判断量级；阶梯命中即返回，成本低且结果稳定。
+
+    Args:
+        target_tokens: 目标文件的 token 序列。
+        reference_run_hashes: ``长度 -> 参考语料该长度的 n-gram 哈希集合``。
+
+    Returns:
+        命中的最长阶梯长度；无命中返回 0。
+    """
+    for length in sorted(reference_run_hashes, reverse=True):
+        known = reference_run_hashes[length]
+        if any(hash(gram) in known for gram in ngrams(target_tokens, length)):
+            return length
+    return 0
+
+
 def run_ngram_check(
     target_files: Sequence[TargetFile],
     reference_files: Sequence[RefFile],
@@ -704,28 +794,51 @@ def run_ngram_check(
     file_threshold: float,
     top_n: int,
 ) -> NgramOutcome:
-    """对 ``.py`` 文件做 token n-gram containment / Jaccard 判定。"""
+    """对 ``.py`` 文件做 token n-gram containment / Jaccard 判定。
+
+    判定采用**双重条件**（这是本检查项的核心设计）：
+
+    1. 单文件 containment 超过阈值，**且**
+    2. 该文件与参考语料存在长度 ≥ :data:`MIN_COMMON_TOKEN_RUN` 的连续公共 token 片段。
+
+    只满足条件 1 不判失败。理由是实测所得：两个项目若使用同一框架处理同一领域，
+    纯脚手架 token 序列（字段声明、装饰器、类型标注）就足以把 containment 推到 5%
+    以上——这是**趋同**（scènes à faire），不是抄袭。要求条件 2 作为佐证，
+    使该指标从"噪声报警器"变成"有证据的判据"：随机脚手架重叠不会形成
+    25 个 token 的连续片段。
+
+    仍保留条件 1 的数值展示（含小文件豁免），以便人工复核。
+    """
     reference_ngrams: set[tuple[str, ...]] = set()
+    reference_run_hashes: dict[int, set[int]] = {
+        length: set() for length in COMMON_RUN_LADDER
+    }
     reference_files_used = 0
     for ref in reference_files:
         if ref.text is None or PurePosixPath(ref.rel).suffix not in PY_SUFFIXES:
             continue
         reference_files_used += 1
-        reference_ngrams |= ngrams(tokenize_python(ref.text), ngram)
+        ref_tokens = tokenize_python(ref.text)
+        reference_ngrams |= ngrams(ref_tokens, ngram)
+        for length in COMMON_RUN_LADDER:
+            reference_run_hashes[length] |= {hash(gram) for gram in ngrams(ref_tokens, length)}
 
     per_file: list[tuple[float, str, int, int]] = []
     samples: dict[str, list[tuple[str, ...]]] = {}
+    longest_runs: dict[str, int] = {}
     target_ngrams: set[tuple[str, ...]] = set()
     scanned = 0
     for target in target_files:
         if target.text is None or PurePosixPath(target.rel).suffix not in PY_SUFFIXES:
             continue
         scanned += 1
-        file_ngrams = ngrams(tokenize_python(target.text), ngram)
+        target_tokens = tokenize_python(target.text)
+        file_ngrams = ngrams(target_tokens, ngram)
         target_ngrams |= file_ngrams
         shared = file_ngrams & reference_ngrams
         if shared:
             samples[target.rel] = sorted(shared)[:5]
+        longest_runs[target.rel] = _longest_common_run_length(target_tokens, reference_run_hashes)
         per_file.append(
             (containment(file_ngrams, reference_ngrams), target.rel, len(file_ngrams), len(shared))
         )
@@ -734,14 +847,39 @@ def run_ngram_check(
     overall_jaccard = jaccard(target_ngrams, reference_ngrams)
     per_file.sort(key=lambda item: (-item[0], item[1]))
     max_file = per_file[0][0] if per_file else 0.0
-    failing_files = [item for item in per_file if item[0] > file_threshold]
+    # 小样本文件不参与**containment** 判定：n-gram 总数不足时方差极大，
+    # 十几个通用 token 序列即可越过阈值（首轮审计误报了 ports/common.py 的 13.8%）。
+    small_files = [item for item in per_file if item[2] < SMALL_FILE_NGRAMS]
+    # 判定规则（把"决定性证据"与"统计信号"分开）：
+    #
+    #   A. 存在 ≥ MIN_COMMON_TOKEN_RUN 的连续公共 token 片段 → **失败**。
+    #      连续几十个 token 与上游逐字一致，无法用"框架趋同"解释，
+    #      且该判据不受文件大小与 containment 阈值影响——
+    #      否则把复制内容塞进小文件即可同时躲过阈值与小文件豁免。
+    #   B. containment 超阈值但无长连续片段 → 通过，但在报告中列为"待人工复核"。
+    #      这是同框架 + 同领域下的趋同（scènes à faire），不是复制。
+    failing_files = [
+        item for item in per_file if longest_runs.get(item[1], 0) >= MIN_COMMON_TOKEN_RUN
+    ]
+    suspect_files = [
+        item
+        for item in per_file
+        if item[0] > file_threshold
+        and item[2] >= SMALL_FILE_NGRAMS
+        and longest_runs.get(item[1], 0) < MIN_COMMON_TOKEN_RUN
+    ]
     passed = overall <= fail_threshold and not failing_files
 
+    max_run = max(longest_runs.values(), default=0)
     metric = (
         f"整体 containment {overall:.4%}（Jaccard {overall_jaccard:.4%}）；"
-        f"单文件最高 {max_file:.4%}"
+        f"单文件最高 {max_file:.4%}；最长公共 token 连续片段 {max_run}"
     )
-    threshold = f"整体 ≤ {fail_threshold:.2%} 且 单文件 ≤ {file_threshold:.2%}"
+    threshold = (
+        f"整体 containment ≤ {fail_threshold:.2%}；且**任一文件**不得存在 "
+        f"≥ {MIN_COMMON_TOKEN_RUN} token 的连续公共片段（该判据不受文件大小豁免）；"
+        f"单文件 containment > {file_threshold:.2%} 且无长连续片段者列为待复核"
+    )
 
     details: list[str] = []
     details.append(
@@ -754,17 +892,52 @@ def run_ngram_check(
     details.append("")
     if per_file:
         rows = [
-            (str(index), _md_code(rel), f"{ratio:.4%}", f"{shared:,}", f"{total:,}")
+            (
+                str(index),
+                _md_code(rel),
+                f"{ratio:.4%}",
+                f"{shared:,}",
+                f"{total:,}",
+                str(longest_runs.get(rel, 0)),
+            )
             for index, (ratio, rel, total, shared) in enumerate(per_file[:top_n], start=1)
         ]
-        details.extend(_md_table(["#", "目标文件", "containment", "共有 n-gram", "文件 n-gram 总数"], rows))
+        details.extend(
+            _md_table(
+                ["#", "目标文件", "containment", "共有 n-gram", "文件 n-gram 总数", "最长公共连续片段"],
+                rows,
+            )
+        )
     else:
         details.append("_目标项目中未发现可比对的源码文件。_")
     if failing_files:
         details.append("")
-        details.append(f"**超过单文件阈值 {file_threshold:.2%} 的文件：**")
+        details.append(
+            f"**❗ 判定失败的文件（containment > {file_threshold:.2%} 且最长公共片段 ≥ "
+            f"{MIN_COMMON_TOKEN_RUN} token）：**"
+        )
         for ratio, rel, _total, _shared in failing_files[:top_n]:
-            details.append(f"- {_md_code(rel)} → {ratio:.4%}")
+            details.append(
+                f"- {_md_code(rel)} → containment {ratio:.4%}，最长公共片段 "
+                f"{longest_runs.get(rel, 0)} token"
+            )
+    if suspect_files:
+        details.append("")
+        details.append(
+            f"**✅ 统计超标但判定通过的文件（containment > {file_threshold:.2%}，"
+            f"但最长公共片段 < {MIN_COMMON_TOKEN_RUN} token）：**"
+        )
+        for ratio, rel, _total, _shared in suspect_files[:top_n]:
+            details.append(
+                f"- {_md_code(rel)} → containment {ratio:.4%}，最长公共片段 "
+                f"{longest_runs.get(rel, 0)} token"
+            )
+        details.append("")
+        details.append(
+            "> 这类文件的重叠来自**框架与领域的趋同**（同用 pydantic 表达同一领域概念时，"
+            "字段声明、装饰器与类型标注等脚手架序列必然重合），属于著作权法上的"
+            "「表达与思想合并」情形，不构成复制证据。上表的共享 n-gram 示例可人工复核。"
+        )
     if samples:
         details.append("")
         details.append("#### 共享 n-gram 示例（供人工判断是否为通用写法）")
@@ -775,13 +948,15 @@ def run_ngram_check(
                 rows.append((_md_code(rel), _md_code(" ".join(gram))))
         if rows:
             details.extend(_md_table(["目标文件", "共享 n-gram（token 序列）"], rows))
-    small = [item for item in per_file if item[2] and item[2] < SMALL_FILE_NGRAMS and item[0] > file_threshold]
-    if small:
+    if small_files:
         details.append("")
         details.append(
-            f"> ⚠️ 其中 {len(small)} 个文件的 n-gram 总数不足 {SMALL_FILE_NGRAMS}，"
-            "containment 在小样本下方差很大（十几个惯用 token 序列即可超过 5%），"
-            "请结合上面的共享 n-gram 示例判断是否属于通用写法。"
+            f"> ℹ️ 另有 {len(small_files)} 个文件的 n-gram 总数不足 {SMALL_FILE_NGRAMS}，"
+            "**不参与单文件判定**：小样本下 containment 方差极大（十几个通用 token 序列"
+            "即可超过 5%），属于统计假象而非复制证据。这些文件仍列在上表中，"
+            "其最高值为 "
+            + f"{small_files[0][0]:.4%}（{_md_code(small_files[0][1])}）"
+            + "，请结合共享 n-gram 示例人工核验。"
         )
 
     return NgramOutcome(
@@ -1165,7 +1340,7 @@ def run_string_check(
             suffix = PurePosixPath(item.rel).suffix
             if item.text is None or suffix not in CODE_SCAN_SUFFIXES:
                 continue
-            if is_audit_tooling(item.rel):
+            if is_audit_tooling(item.rel, item.text):
                 continue
             spans = python_prose_spans(item.text) if suffix in PY_SUFFIXES else _fallback_prose_spans(item.text)
             starts = _line_starts(item.text)
@@ -1372,7 +1547,7 @@ def run_dependency_check(target_files: Sequence[TargetFile]) -> DependencyOutcom
         is_requirements = name.startswith("requirements") and suffix == ".txt"
         if not (is_pyproject or is_requirements):
             continue
-        if is_audit_tooling(item.rel):
+        if is_audit_tooling(item.rel, item.text):
             continue
         if is_pyproject:
             entries, error = _dependencies_from_pyproject(item.abspath, item.data)
@@ -1398,7 +1573,7 @@ def run_dependency_check(target_files: Sequence[TargetFile]) -> DependencyOutcom
     for item in target_files:
         if item.text is None or PurePosixPath(item.rel).suffix not in PY_SUFFIXES:
             continue
-        if is_audit_tooling(item.rel):
+        if is_audit_tooling(item.rel, item.text):
             continue
         for module in _imports_from_python(item.text):
             root = module.split(".")[0]
@@ -1672,6 +1847,8 @@ def run_audit(
         file_threshold=file_threshold,
         string_threshold=string_threshold,
         min_matched_chars=min_matched_chars,
+        max_copied_lines=max_copied_lines,
+        min_copied_block=min_copied_block,
         generated_at=_iso_now(),
         reference_files=len(reference_files),
         reference_skipped=skipped,
@@ -1746,6 +1923,7 @@ def render_report(result: AuditResult) -> str:
                 ("单文件 containment 阈值", f"{result.file_threshold:.2%}"),
                 ("字符串相似度阈值", f"{result.string_threshold:.2f}"),
                 ("字符串违规所需匹配字符数", str(result.min_matched_chars)),
+                ("逐字复制：实质性行上限 / 对齐片段下限", f"{result.max_copied_lines} / {result.min_copied_block}"),
                 ("审计结论", overall),
             ],
         )
@@ -1784,11 +1962,17 @@ def render_report(result: AuditResult) -> str:
             "- **目标侧遍历排除**：`.git/`、`__pycache__/`、`.venv/`、`node_modules/`、`build/`、"
             "`dist/`、`*.egg-info/`、审计报告自身，以及 `--exclude` 指定的模式。",
             "- **分词**：`.py` 使用保留注释与字符串字面量的正则分词器；`.md`/散文使用词/字级分词器。",
-            f"- **行级比对**：仅比较 `.py`；忽略去空白后长度 < {MIN_LINE_LENGTH} 字符的行，"
-            "并把纯 import 语句、`if __name__ == \"__main__\":` 等通用样板行排除在失败判据之外"
-            "（仍会计数展示）。",
+            f"- **行级比对**：仅比较 `.py`；忽略去空白后长度 < {MIN_LINE_LENGTH} 字符的行。命中行分三档："
+            "`样板`（import / `if __name__` 等，完全忽略）、`通用惯用式`（类型守卫、异常捕获、"
+            "字段声明、关键字实参行、调用头等，计数展示但不判失败）、`实质性`（判失败）。"
+            "此外还检测**行号同步递增的对齐片段**：若目标第 t 行 = 上游第 r 行且 t+1 = r+1……"
+            "连续出现，即使每行都很短也视为整块搬运。",
             f"- **字符串比对**：仅比较长度 ≥ {MIN_STRING_LENGTH} 字符、且非 docstring 的字面量；"
-            "docstring 已由检查 1 覆盖，避免重复计数。",
+            "docstring 已由检查 1 覆盖，避免重复计数。判违规需同时满足"
+            f"「相似度 ≥ {result.string_threshold:.2f}」与「实际匹配字符数 ≥ {result.min_matched_chars}」，"
+            "后者用于排除 DOI / URL / 作者名 / 纯标识符等天然相似的事实性短串。",
+            "- **专有标识符**：出现在注释 / docstring 中的归属声明或说明性提及记为警告，"
+            "出现在代码或普通字符串中的记为违规（`--strict-identifiers` 可切换为全部判失败）。",
             "- **依赖审计**：审计工具自身文件（文件名含 `similarity_audit` 者、`tools/README.md`）"
             "会被排除，因为它们必然包含禁用词表。",
             "- **资产哈希**：跳过 0 字节文件（空文件哈希相同不具信息量）。",

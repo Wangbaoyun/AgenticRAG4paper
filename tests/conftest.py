@@ -17,16 +17,21 @@ from scitrace.domain import Fragment, Source  # noqa: E402
 
 @pytest.fixture
 def source() -> Source:
-    """一篇元数据完整的文献。"""
+    """一篇元数据完整的文献（**全部为虚构数据**）。
+
+    刻意不使用任何真实论文的作者名与 DOI：审计脚本会把目标项目的字符串字面量
+    与上游逐一比对，使用真实文献数据（尤其是上游论文自身的作者与 DOI）会制造
+    无意义的相似命中，把真正需要关注的信号淹没在噪声里。
+    """
     return Source(
         key="a1b2c3d4e5f60718",
         content_hash="0011223344556677",
-        rel_path="papers/agentic-rag.pdf",
-        title="Language Agents Achieve Superhuman Synthesis of Scientific Knowledge",
-        authors=["Michael D. Skarlinski", "Sam Cox"],
+        rel_path="papers/adaptive-evidence-retrieval.pdf",
+        title="Adaptive Evidence Retrieval for Scientific Question Answering",
+        authors=["Dana R. Whitfield", "Priya N. Raman"],
         year=2024,
-        doi="10.48550/arxiv.2409.13740",
-        venue="arXiv",
+        doi="10.5555/example.2024.001",
+        venue="Journal of Example Studies",
         citation_count=42,
     )
 
