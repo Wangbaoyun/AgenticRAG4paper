@@ -1,0 +1,93 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scitrace"
+version = "0.1.0"
+description = "证据可溯源的科研文献问答系统：检索 → 取证 → 合成，每句结论都能回到原文片段"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "wby" }]
+keywords = [
+    "rag",
+    "agentic-rag",
+    "scientific-literature",
+    "question-answering",
+    "citation-grounding",
+    "llm-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# 运行时依赖：刻意保持精简且全部为通用库。
+# 明确不依赖任何 paper-qa* / fhaviary / aviary / fhlmi / ldp ——
+# LLM 抽象与 Agent 运行时均为本项目自研，见 docs/SPEC.md 的原创增量章节。
+dependencies = [
+    "anyio>=4.4",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.6",
+    "pybtex>=0.24",
+    "rich>=13.7",
+    "tantivy>=0.22",
+    "tenacity>=9.0",
+    "tiktoken>=0.8",
+]
+
+[project.optional-dependencies]
+# LLM 接入后端（二选一即可）
+llm = ["litellm>=1.55"]
+openai = ["openai>=1.50"]
+# 本地 embedding（中文场景默认推荐）
+local-embedding = ["sentence-transformers>=3.0"]
+# PDF 解析后端（可插拔，至少装一个）
+pypdf = ["pypdf>=5.0"]
+pymupdf = ["pymupdf>=1.24"]
+# 交叉编码器重排（原创增量之二：可插拔检索内核）
+rerank = ["sentence-transformers>=3.0"]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[project.scripts]
+stc = "scitrace.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scitrace"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "SIM", "RUF", "ASYNC", "S"]
+ignore = ["S101"]  # 测试中允许 assert
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "PLR2004"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["scitrace"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"

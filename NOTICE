@@ -1,0 +1,22 @@
+scitrace
+Copyright 2026 wby
+
+This product is an independent implementation. It includes no source code,
+prompt text, documentation text, or other copyrightable expression from any
+third-party project.
+
+Design paradigm inspired by the publicly available work:
+
+  Skarlinski et al., "Language agents achieve superhuman synthesis of
+  scientific knowledge", arXiv:2409.13740
+  https://arxiv.org/abs/2409.13740
+
+  PaperQA2, FutureHouse, https://github.com/Future-House/paper-qa
+  Copyright 2024 FutureHouse, licensed under the Apache License, Version 2.0
+
+"PaperQA" is a designation of FutureHouse. scitrace is not affiliated with,
+endorsed by, or sponsored by FutureHouse.
+
+The independence claim above is supported by an automated similarity audit
+(tools/similarity_audit.py, report at docs/AUDIT.md) and by the development
+process record in docs/PROVENANCE.md.

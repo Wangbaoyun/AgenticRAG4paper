@@ -1,0 +1,48 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+src/*.egg-info/
+
+# ---- 虚拟环境 ----
+.venv/
+venv/
+env/
+
+# ---- 工具缓存 ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---- 本地数据与索引（含用户自己的论文，绝不入库） ----
+my_papers/
+*.pdf
+!tests/fixtures/**/*.pdf
+indexes/
+*.index
+manifest.csv
+answers/
+
+# ---- 密钥 ----
+.env
+.env.*
+!.env.example
+*.key
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+*:Zone.Identifier
+
+# ---- 审计报告由脚本生成，但报告本身需要入库以便追溯 ----
+!docs/AUDIT.md
