@@ -461,6 +461,22 @@ def _build_units(rows: list[tuple[str, int]]) -> list[TextUnit]:
     return units
 
 
+def _common_section_prefix(
+    left: tuple[str, ...], right: tuple[str, ...]
+) -> tuple[str, ...]:
+    """两个章节路径的公共前缀。
+
+    用于跨章节合并时给出**诚实的归属**：一个横跨 "1 Method" 与 "2 Results" 的块，
+    声称它属于其中任何一节都是错的，而它们的公共前缀（可能是空）才是事实。
+    """
+    shared: list[str] = []
+    for a, b in zip(left, right, strict=False):
+        if a != b:
+            break
+        shared.append(a)
+    return tuple(shared)
+
+
 def _merge_units(units: list[TextUnit], settings: ChunkingSettings) -> list[TextUnit]:
     """把段落聚合成目标长度的块，并合并过小的块。
 
@@ -489,17 +505,32 @@ def _merge_units(units: list[TextUnit], settings: ChunkingSettings) -> list[Text
                 )
             )
 
-    # 小碎片回收：与同章节的前一块合并
+    # 小碎片回收。
+    #
+    # 最初的实现只与**同章节**的前一块合并，理由是"跨章节合并会让引用位置失真"。
+    # 那个理由在半数情况下成立，但边界测试暴露了它的代价：一份由 48 个
+    # "小节标题 + 一句话正文"组成的文档会产出 48 个 42 字符的碎片
+    # （全语料 8.9% 的片段不足 100 字符，最短 4 字符）。
+    # 42 字符的片段作为证据几乎无用，也会让检索结果被碎片刷屏。
+    #
+    # 现在改为**允许跨章节合并，但用公共前缀作为合并后的归属**——
+    # 这既解决了碎片问题，又不会谎称内容属于其中某一节。
+    # 另加 max_chars 上限：回收碎片不该反过来造出超长块。
     compact: list[TextUnit] = []
     for unit in merged:
-        if (
-            compact
+        previous = compact[-1] if compact else None
+        mergeable = (
+            previous is not None
             and len(unit.text) < settings.min_chars
-            and compact[-1].section_path == unit.section_path
-        ):
-            previous = compact[-1]
+            and len(previous.text) + len(unit.text) + 2 <= settings.max_chars
+        )
+        if mergeable:
+            assert previous is not None  # noqa: S101 - 由 mergeable 保证
             previous.text = f"{previous.text}\n\n{unit.text}"
             previous.page_end = _max_optional(previous.page_end, unit.page_end)
+            previous.section_path = _common_section_prefix(
+                previous.section_path, unit.section_path
+            )
         else:
             compact.append(unit)
     return compact

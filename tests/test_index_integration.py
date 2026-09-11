@@ -152,6 +152,51 @@ class TestRealPipeline:
         assert commit_calls is None or True  # 替身专属计数，真实实现无此属性
 
 
+class TestMixedFormatCorpus:
+    """混合格式语料必须能整体摄入——这是真实使用中最常见的情形。
+
+    回归自边界测试：默认配置（``ingest.parser="pypdf"``）下，一份含 23 个
+    ``.txt``/``.md`` 文件的语料**一篇都索引不进去**，全部报
+    "解析器 'pypdf' 不支持文件 xxx.txt"。原因是把"PDF 解析后端"当成了
+    "所有文件的强制解析器"。此前的测试要么是纯 PDF，要么走不带 preferred
+    的自动选择路径，完全没暴露。
+    """
+
+    async def test_pdf_and_text_coexist_under_preferred_pdf_parser(self, tmp_path: Path) -> None:
+        from scitrace.adapters.parsers import select_parser
+        from scitrace.factory import _resolve_parser
+
+        harness = RealHarness(tmp_path)
+        write_text_pdf(harness.corpus / "paper.pdf", ["Abstract", "We study retrieval."])
+        harness.write_chinese("notes.txt", "一篇中文笔记，内容足够长以便切出片段。")
+        harness.write_chinese("readme.md", "# 说明\n\n这是 Markdown 格式的说明文本。")
+
+        # 模拟默认配置：ingest.parser = "pypdf"
+        harness.pipeline.parser_resolver = lambda path: _resolve_parser(  # type: ignore[assignment]
+            path, preferred="pypdf"
+        )
+        report = await harness.pipeline.run([harness.corpus])
+
+        assert report.failed == [], f"混合格式语料不应有失败项：{report.failed}"
+        assert len(report.added) == 3
+        assert report.fragment_count > 0
+
+    async def test_preferred_parser_still_used_for_its_own_format(self, tmp_path: Path) -> None:
+        """修好回退语义之后，首选解析器在它自己的格式上仍必须被采用——
+        否则修复就变成了"静默忽略用户配置"。"""
+        from scitrace.adapters.parsers import PlainTextParser, PyPDFParser
+        from scitrace.factory import _resolve_parser
+
+        assert isinstance(_resolve_parser(Path("a.pdf"), preferred="pypdf"), PyPDFParser)
+        assert isinstance(_resolve_parser(Path("a.txt"), preferred="plaintext"), PlainTextParser)
+
+    async def test_unsupported_format_still_raises(self, tmp_path: Path) -> None:
+        from scitrace.factory import _resolve_parser
+
+        with pytest.raises(ValueError, match="没有解析器"):
+            _resolve_parser(Path("a.docx"), preferred="pypdf")
+
+
 class TestPersistence:
     async def test_vector_index_roundtrip(self, tmp_path: Path) -> None:
         index_dir = tmp_path / "index"

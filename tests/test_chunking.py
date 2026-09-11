@@ -222,12 +222,16 @@ class TestChunkDocument:
         assert "Alpha paragraph two." in chunks[0].text
 
     def test_section_path_hierarchy(self) -> None:
-        doc = make_document(
-            "1 Method\n\nIntro text for method.\n\n1.1 Retrieval\n\nRetrieval details here."
+        """章节足够长时，section_path 必须精确到子节。"""
+        settings = ChunkingSettings(
+            target_chars=500, max_chars=2000, min_chars=0, overlap_chars=0
         )
-        chunks = chunk_document(doc, source_key="s1")
-        assert chunks[0].section_path == ["1 Method"]
-        assert chunks[-1].section_path == ["1 Method", "1.1 Retrieval"]
+        body = "内容足够长以便独立成块。" * 30
+        doc = make_document(f"1 Method\n\n{body}\n\n1.1 Retrieval\n\n{body}")
+        chunks = chunk_document(doc, source_key="s1", settings=settings)
+        paths = [chunk.section_path for chunk in chunks]
+        assert ["1 Method"] in paths
+        assert ["1 Method", "1.1 Retrieval"] in paths
 
     def test_page_range_tracked(self) -> None:
         doc = make_document("Page one text that is long enough.", "Page two text that is longer.")
@@ -334,15 +338,51 @@ class TestChunkDocument:
         chunks = chunk_document(doc, source_key="s1", settings=settings)
         assert len(chunks) == 1
 
-    def test_small_chunks_not_merged_across_sections(self) -> None:
-        """跨章节合并会让引用位置失真——"结论"的句子被标成属于"方法"。"""
+    def test_short_sections_merge_but_never_lie_about_attribution(self) -> None:
+        """短小节必须被回收，但合并后的归属必须诚实。
+
+        最初的实现只与**同章节**的前一块合并，理由是"跨章节合并会让引用位置失真"。
+        那个理由在半数情况下成立，代价却在边界测试里暴露了：一份由 48 个
+        "小节标题 + 一句话正文"组成的文档产出 48 个 42 字符的碎片，
+        而 42 字符的片段作为证据几乎无用。
+
+        现在的规则是：允许跨章节合并，但用**公共前缀**作为归属。
+        这里两个小节没有公共前缀，因此归属是空——而不是谎称属于 "1 A"。
+        """
         settings = ChunkingSettings(
             target_chars=1000, max_chars=2000, min_chars=500, overlap_chars=0
         )
         doc = make_document("1 A\n\nShort one.\n\n2 B\n\nShort two.")
         chunks = chunk_document(doc, source_key="s1", settings=settings)
-        assert len(chunks) == 2
-        assert chunks[0].section_path == ["1 A"]
+        assert len(chunks) == 1, "短小节应被回收成一个块"
+        assert chunks[0].section_path == [], "无公共前缀时归属应为空，而非沿用前一节"
+        assert "Short one." in chunks[0].text and "Short two." in chunks[0].text
+
+    def test_nested_sections_merge_with_common_prefix(self) -> None:
+        """嵌套小节的公共前缀是父节，合并后应归到父节。"""
+        settings = ChunkingSettings(
+            target_chars=1000, max_chars=2000, min_chars=500, overlap_chars=0
+        )
+        doc = make_document(
+            "1 Method\n\nShort intro.\n\n1.1 Retrieval\n\nShort details."
+        )
+        chunks = chunk_document(doc, source_key="s1", settings=settings)
+        assert len(chunks) == 1
+        assert chunks[0].section_path == ["1 Method"]
+
+    def test_recursive_sections_do_not_explode_into_fragments(self) -> None:
+        """回归：48 个"标题 + 一句话"的小节曾产出 48 个 42 字符的碎片。"""
+        settings = ChunkingSettings(
+            target_chars=1500, max_chars=3000, min_chars=300, overlap_chars=200
+        )
+        text = "".join(
+            f"{'#' * level} Level {level}\n\nBody text for level {level} with enough content.\n\n"
+            for level in range(1, 7)
+        ) * 8
+        chunks = chunk_document(make_document(text), source_key="s1", settings=settings)
+        assert all(chunk.char_count >= 100 for chunk in chunks), (
+            f"不应产出碎片，实际长度分布：{sorted(c.char_count for c in chunks)[:5]}"
+        )
 
     def test_char_count_matches_text(self) -> None:
         doc = make_document("Some reasonably long paragraph text for counting.")

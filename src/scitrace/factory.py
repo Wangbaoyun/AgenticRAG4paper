@@ -281,10 +281,33 @@ def build_services(
 
 
 def _resolve_parser(path: Path, *, preferred: str | None = None) -> DocumentParser:
-    """装配层提供的解析器选择函数（唯一 import adapters.parsers 的地方）。"""
-    from scitrace.adapters.parsers import select_parser  # noqa: PLC0415
+    """装配层提供的解析器选择函数（唯一 import adapters.parsers 的地方）。
 
-    return select_parser(path, preferred=preferred)
+    ## 语义：``preferred`` 是**该后端的适用格式内**的首选，不是"所有文件的强制解析器"
+
+    ``ingest.parser`` 在 SPEC §3.2 里的定义是"**PDF** 解析后端名"。最初的实现把它
+    直接传给 ``select_parser(preferred=...)``，而后者在"首选解析器不支持该文件"时
+    **报错而不回退**——那个严格行为是为"用户配了 pymupdf 却静默用了 pypdf"这类
+    误配置设计的。两者语义不同，套用之后后果很严重：
+
+    **边界测试实测**：默认配置（``parser="pypdf"``）下，一份含 23 个 ``.txt``/``.md``
+    文件的语料**一篇都索引不进去**，全部报"解析器 'pypdf' 不支持文件 xxx.txt"。
+    混合格式语料是真实使用中最常见的情形，而当时的全部测试要么是纯 PDF、
+    要么走的是不带 ``preferred`` 的自动选择路径，因此完全没暴露。
+
+    现在的规则：``preferred`` 只在它**自己声明的格式**内生效；其他格式走自动选择。
+    ``select_parser(path, preferred=...)`` 的严格语义保持不变，供需要它的调用方使用。
+    """
+    from scitrace.adapters.parsers import get_parser, select_parser  # noqa: PLC0415
+
+    if preferred:
+        parser = get_parser(preferred)
+        if parser.supports(path):
+            return parser
+        logger.debug(
+            "首选解析器 %s 不适用于 %s，改由自动选择处理", preferred, path.name
+        )
+    return select_parser(path)
 
 
 def build_ingest_pipeline(settings: Settings, services: Services) -> object:
