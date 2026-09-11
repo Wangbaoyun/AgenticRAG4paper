@@ -11,6 +11,7 @@
 from scitrace.pipeline.chunking import chunk_document, split_sentences
 from scitrace.pipeline.ingest import IngestPipeline, IngestReport, Manifest, ManifestStore
 from scitrace.pipeline.retrieval import Retriever, reciprocal_rank_fusion
+from scitrace.pipeline.synthesis import AnswerSynthesizer, bind_citations
 from scitrace.pipeline.screening import CrossEncoderScreener, LLMScreener, coerce_relevance
 
 __all__ = [
@@ -20,7 +21,9 @@ __all__ = [
     "LLMScreener",
     "Manifest",
     "ManifestStore",
+    "AnswerSynthesizer",
     "Retriever",
+    "bind_citations",
     "chunk_document",
     "coerce_relevance",
     "reciprocal_rank_fusion",
