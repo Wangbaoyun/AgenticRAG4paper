@@ -320,8 +320,8 @@ BOUNDARY_QUESTIONS: tuple[dict[str, str], ...] = (
     },
     {
         "id": "q-out",
-        "question": "What is the boiling point of mercury at standard pressure?",
-        "probe": "语料外问题",
+        "question": "What is the superconducting transition temperature of hydrogen sulfide at 150 GPa?",
+        "probe": "语料外问题（具体科学事实，语料中必然没有）",
         "expect": "必须拒答，且不产生任何引用",
     },
     {
