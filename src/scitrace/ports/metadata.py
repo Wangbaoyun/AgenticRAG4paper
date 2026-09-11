@@ -10,11 +10,40 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from scitrace.domain import SourcePatch
 
-__all__ = ["MetadataProvider", "MetadataResolver"]
+__all__ = ["MetadataMatch", "MetadataProvider", "MetadataResolver"]
+
+#: 匹配置信度。决定合并时谁优先（SPEC §3.5：DOI 校验通过 > 标题模糊匹配）。
+#:
+#: - ``doi``：用 DOI 走精确端点拿到结果，标识符级别确定；
+#: - ``title``：用标题走检索端点，按标题相似度匹配，存在张冠李戴的可能；
+#: - ``none``：来源未提供匹配依据（例如本地快照按 DOI 命中，但无法判断来源可信度）。
+Confidence = Literal["doi", "title", "none"]
+
+
+class MetadataMatch(BaseModel):
+    """单个来源的一次匹配结果。
+
+    端口刻意不直接返回 :class:`SourcePatch`，因为**只有补丁无法表达置信度**：
+    用 DOI 精确查到的标题与用标题模糊搜到的标题在合并时应当区别对待，
+    否则一条"搜错了论文"的结果会和确定的结果平起平坐。
+    把置信度作为返回结构的一部分，让这条规则无法被绕过。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    patch: SourcePatch
+    provider: str
+    confidence: Confidence = "none"
+    #: 来源返回的标题原文，供排障与人工核对（"这条错标题是谁给的"）。
+    matched_title: str | None = None
+    #: 标题相似度得分（0–1）。``confidence="title"`` 时必须有意义。
+    score: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 @runtime_checkable
@@ -30,18 +59,19 @@ class MetadataProvider(Protocol):
         """
         ...
 
-    async def lookup(self, patch: SourcePatch) -> SourcePatch | None:
+    async def lookup(self, patch: SourcePatch) -> MetadataMatch | None:
         """按已知线索查询元数据。
 
         查询线索来自"当前已知的稀疏补丁"（通常含 ``doi`` 与/或 ``title``）。
-        实现应根据自己能用的线索选择端点：有 DOI 时走精确端点，
-        只有标题时走模糊检索端点。
+        实现应根据自己能用的线索选择端点：有 DOI 时走精确端点并置
+        ``confidence="doi"``，只有标题时走模糊检索端点、按标题相似度过滤后
+        置 ``confidence="title"``。
 
         Args:
             patch: 已知线索。实现**不应**修改它。
 
         Returns:
-            找到的稀疏补丁；未找到或无可用线索时返回 ``None``。
+            匹配结果；未找到或无可用线索时返回 ``None``。
 
         Raises:
             实现**不应**因网络错误、限流或响应格式异常而抛出——

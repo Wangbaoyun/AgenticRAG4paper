@@ -13,12 +13,13 @@
 from scitrace.ports.common import ScoredFragment, ToolSpec
 from scitrace.ports.fulltext_index import FullTextIndex
 from scitrace.ports.llm import EmbeddingClient, LLMClient, LLMMessage, LLMResponse, ToolCall
-from scitrace.ports.metadata import MetadataProvider, MetadataResolver
+from scitrace.ports.metadata import Confidence, MetadataMatch, MetadataProvider, MetadataResolver
 from scitrace.ports.parser import DocumentParser, ParseError
 from scitrace.ports.screener import EvidenceScreener
 from scitrace.ports.vector_index import VectorIndex
 
 __all__ = [
+    "Confidence",
     "DocumentParser",
     "EmbeddingClient",
     "EvidenceScreener",
@@ -26,6 +27,7 @@ __all__ = [
     "LLMClient",
     "LLMMessage",
     "LLMResponse",
+    "MetadataMatch",
     "MetadataProvider",
     "MetadataResolver",
     "ParseError",
