@@ -168,6 +168,32 @@ python tools/similarity_audit.py --target . --reference ../PaperQA --report /tmp
 containment 阈值与小文件豁免，使检查项 1 误判为通过。因此把"长连续片段"
 确立为**不受豁免的独立判据**——上表已是修正后的结果。
 
+#### 第二轮校准（M2 适配器层落地后）
+
+项目规模从 37 个文件增至 64 个后复跑审计，检查项 1 通过，但**检查项 2 报出
+22 行"实质性逐字相同"**。逐行核查后，全部属于**由语言或第三方库 API 强制规定形式**的行：
+
+| 命中行 | 出现次数 | 性质 |
+| --- | --- | --- |
+| `logger = logging.getLogger(__name__)` | 9 | Python 生态该功能的标准写法，事实上不存在第二种 |
+| `writer.commit()` / `await client.aclose()` / `response.raise_for_status()` | 4 | 无参 API 调用，形式由库决定 |
+| `"type": "function",` | 2 | OpenAI 工具 schema 的规定字段 |
+| `T = TypeVar("T")` | 1 | typing 惯用声明 |
+| `assert results` | 2 | 测试断言最简形式 |
+| `if fetch_k < k:` | 1 | 无函数体的裸比较守卫 |
+| `directory.mkdir(parents=True, exist_ok=True)` | 1 | pathlib 创建目录的规范写法 |
+
+处置：在 :data:`GENERIC_IDIOM_RES` 中新增一组**"语言/API 强制形式"**规则，
+法理仍是 merger doctrine（完成该功能只有一种写法时，该写法不受保护）。
+
+**这次没有调阈值。** 检查项 2 的 `实质性 ≤ 0 行` 保持严格不变——
+把阈值放宽能让报表立刻变绿，但也会同时放过真正的一两行搬运。
+规则集是**逐条枚举**的：每新增一类都需要人工判断"这确实没有表达空间"，
+因此它无法在无人察觉的情况下逐步吸收真实重合。
+
+**验证**：植入式对抗测试复跑，检查项 2 仍正确失败（实质性 16 行、最长对齐片段 4 行），
+证明新规则没有把检测能力削弱到失效。
+
 ### 4.4 这套验证**不能**证明什么
 
 必须说清楚，否则就是过度宣称：

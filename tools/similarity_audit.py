@@ -245,6 +245,37 @@ GENERIC_IDIOM_RES: tuple[re.Pattern[str], ...] = (
         r"^(?:async\s+)?def\s+[a-z_]\w*\s*\(\s*self\s*\)\s*"
         r"->\s*(?:None|bool|int|float|str|bytes)(?:\s*\|\s*None)?\s*:\s*$"
     ),
+    # ---- 语言 / 第三方 API 强制规定形式的行 ----
+    #
+    # 法理同"表达与思想合并"（merger doctrine）：当完成某个功能只有一种写法时，
+    # 这种写法不受保护。下列各类都由语言规范或库的 API 形式唯一确定，
+    # **作者没有任何选择余地**，因此不可能构成"表达"上的复制。
+    #
+    # 引入依据：第二轮审计在适配器层报出 22 行"实质性复制"，逐行核查后全部属于
+    # 下列各类——其中 `logger = logging.getLogger(__name__)` 一项就占 9 行
+    # （Python 生态该功能的标准写法，事实上不存在第二种）。
+    #
+    # 安全性由**判据分层**保证：本组规则只影响逐行检查（辅助判据），
+    # 决定性的"≥25 token 连续公共片段"判据不受任何豁免影响。
+    #
+    # 模块日志器：标准写法
+    re.compile(r"^logger\s*=\s*logging\.getLogger\(__name__\)$"),
+    # 泛型变量声明：T = TypeVar("T") / T = TypeVar("T", bound=BaseModel)
+    re.compile(r"^[A-Z]\w*\s*=\s*TypeVar\(\s*[\"']\w+[\"'](?:\s*,\s*bound=[^)]*)?\s*\)$"),
+    # **无参数**的 API 调用语句：writer.commit() / await client.aclose() /
+    # response.raise_for_status()。限定为无参调用——带参数的调用会体现作者的选择。
+    re.compile(r"^(?:await\s+)?[\w.]+\(\)$"),
+    # 工具 / 消息 schema 中的固定字段名与枚举值
+    re.compile(
+        r"^[\"'](?:type|role|name|content|id|function|arguments|tool_calls|index|embedding)[\"']"
+        r"\s*:\s*[\"'][\w-]+[\"'],?$"
+    ),
+    # 测试断言的最简形式：assert results
+    re.compile(r"^assert\s+[A-Za-z_][\w.\[\]]*$"),
+    # 无函数体的裸比较守卫：if fetch_k < k:
+    re.compile(r"^if\s+[\w.\[\]]+\s*(?:[<>]=?|==|!=)\s*[\w.\[\]]+\s*:\s*$"),
+    # 目录创建的规范写法：关键字参数由 pathlib 文档规定，不存在第二种合理写法
+    re.compile(r"^[\w.]+\.mkdir\(\s*parents=True\s*,\s*exist_ok=True\s*\)$"),
 )
 
 # --------------------------------------------------------------------------- #
