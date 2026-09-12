@@ -16,6 +16,7 @@ from typing import Any
 
 from scitrace.adapters.llm.convert import parse_tool_calls, strip_reasoning_tags, to_backend_messages
 from scitrace.adapters.llm.retry import RetryPolicy, with_retries
+from scitrace.config.settings import PricingSettings
 from scitrace.ports import LLMMessage, LLMResponse, ToolSpec
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ class LiteLLMClient:
         max_tokens: int = 4096,
         timeout_s: float = 60.0,
         retry_policy: RetryPolicy | None = None,
+        pricing: PricingSettings | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key
@@ -51,6 +53,9 @@ class LiteLLMClient:
         self._max_tokens = max_tokens
         self._timeout_s = timeout_s
         self._retry_policy = retry_policy or RetryPolicy()
+        #: 自备计价表。litellm 的价格表不收录自建/代理模型名，
+        #: 缺失时它只能报告"无法估算"，而成本闸门会因此永远不触发。
+        self._pricing = pricing or PricingSettings()
 
     @property
     def model_name(self) -> str:
@@ -115,8 +120,7 @@ class LiteLLMClient:
         )
         return self._to_response(raw, litellm)
 
-    @staticmethod
-    def _to_response(raw: Any, litellm_module: Any) -> LLMResponse:
+    def _to_response(self, raw: Any, litellm_module: Any) -> LLMResponse:
         """把 LiteLLM 的响应翻译成领域模型。
 
         对每一个字段都做"取不到就用默认值"的处理。不同提供商的响应结构差异很大
@@ -133,15 +137,24 @@ class LiteLLMClient:
         usage = getattr(raw, "usage", None)
         prompt_tokens = _as_int(getattr(usage, "prompt_tokens", 0))
         completion_tokens = _as_int(getattr(usage, "completion_tokens", 0))
+        cached_tokens = _as_int(
+            getattr(getattr(usage, "prompt_tokens_details", None), "cached_tokens", 0)
+        )
+        cached_tokens = min(cached_tokens, prompt_tokens)
 
-        cost_usd, cost_known = _estimate_cost(raw, litellm_module)
+        cost, currency, cost_known = _estimate_cost(
+            raw, litellm_module, pricing=self._pricing, cached_tokens=cached_tokens,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        )
         return LLMResponse(
             content=strip_reasoning_tags(content),
             tool_calls=tool_calls,
             model=str(getattr(raw, "model", "") or ""),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cost_usd=cost_usd,
+            cached_tokens=cached_tokens,
+            cost=cost,
+            cost_currency=currency,
             cost_known=cost_known,
             finish_reason=finish_reason,
         )
@@ -156,19 +169,44 @@ def _as_int(value: Any) -> int:
     return max(0, number)
 
 
-def _estimate_cost(raw: Any, litellm_module: Any) -> tuple[float, bool]:
-    """估算本次调用的美元成本，并**如实报告成本是否可信**。
+def _estimate_cost(
+    raw: Any,
+    litellm_module: Any,
+    *,
+    pricing: PricingSettings,
+    cached_tokens: int,
+    prompt_tokens: int,
+    completion_tokens: int,
+) -> tuple[float, str, bool]:
+    """估算本次调用的成本，并**如实报告成本是否可信**。
 
-    成本拿不到时不抛异常（成本是观测指标，不该让整次问答失败），
-    但必须返回 ``cost_known=False`` —— 只是"记 0 并告警"是不够的：
-    告警会被淹没在日志里，而 ``Usage.estimated_cost_usd == 0`` 会让
-    上层的成本闸门看起来在工作、实际永远不触发。本项目的实机运行
-    正是这样：`deepseek-v4-flash` 不在价格表中，一次 agentic 问答烧掉
-    171k token，而成本闸门全程沉默。
+    两级来源，按可信度排序：
+
+    1. **自备计价表**（``settings.pricing``）。优先使用它——用户显式配置的价目
+       比 litellm 内置的更贴近实际账单（尤其是自建/代理模型）。
+    2. **litellm 内置价格表**。仅在未配置自备表时使用。
+
+    两者都没有时返回 ``cost_known=False``。这一点比"记 0"重要得多：
+    只记 0 并告警的话，``Usage.estimated_cost`` 恒为 0，上层的成本闸门
+    会**看起来在工作、实际永远不触发**——本项目的实机运行正是如此
+    （``deepseek-v4-flash`` 不在 litellm 表中，一次 agentic 问答烧掉 171k token
+    而成本闸门全程沉默）。
 
     Returns:
-        ``(成本, 是否可信)``。
+        ``(成本, 币种, 是否可信)``。
     """
+    if pricing.configured:
+        uncached = max(0, prompt_tokens - cached_tokens)
+        return (
+            pricing.cost_of(
+                cached_tokens=cached_tokens,
+                uncached_tokens=uncached,
+                completion_tokens=completion_tokens,
+            ),
+            pricing.currency,
+            True,
+        )
+
     try:
         cost = litellm_module.completion_cost(completion_response=raw)
     except Exception as error:  # noqa: BLE001 - 价格表缺项是常见情况
@@ -176,12 +214,23 @@ def _estimate_cost(raw: Any, litellm_module: Any) -> tuple[float, bool]:
         if model not in _COST_WARNING_ISSUED:
             _COST_WARNING_ISSUED.add(model)
             logger.warning(
-                "无法估算调用成本，本次及后续同类调用将记为 0（模型 %s 不在 litellm 价格表中）：%s",
+                "无法估算成本（模型 %s 既不在 litellm 价格表中、也未配置 pricing）：%s。"
+                "本次及后续同类调用将记为 0，成本闸门不会生效。"
+                "如需成本治理，请配置 settings.pricing。",
                 model,
                 error,
             )
-        return 0.0, False
+        return 0.0, pricing.currency, False
     try:
-        return max(0.0, float(cost)), True
+        return max(0.0, float(cost)), "USD", True
     except (TypeError, ValueError):
-        return 0.0, False
+        return 0.0, pricing.currency, False
+
+
+def _as_int(value: Any) -> int:
+    """把用量字段安全地转成非负整数。"""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, number)

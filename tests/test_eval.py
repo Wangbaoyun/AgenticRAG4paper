@@ -67,7 +67,8 @@ def result(**overrides) -> CaseResult:
         "citation_count": 1,
         "dangling_citations": 0,
         "duration_s": 1.0,
-        "cost_usd": 0.01,
+        "cost": 0.01,
+        "currency": "CNY",
     }
     base.update(overrides)
     return CaseResult(**base)
@@ -146,7 +147,7 @@ class TestMetrics:
 
     def test_cost_and_latency_averages(self) -> None:
         report = EvaluationReport(
-            results=[result(cost_usd=0.02, duration_s=2.0), result(cost_usd=0.04, duration_s=4.0)]
+            results=[result(cost=0.02, duration_s=2.0), result(cost=0.04, duration_s=4.0)]
         )
         assert report.cost_per_question == pytest.approx(0.03)
         assert report.mean_latency_s == pytest.approx(3.0)

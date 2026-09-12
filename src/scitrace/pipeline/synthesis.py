@@ -335,7 +335,9 @@ class AnswerSynthesizer:
         usage = Usage(
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
-            estimated_cost_usd=response.cost_usd,
+            estimated_cost=response.cost,
+                            cost_currency=response.cost_currency,
+                            cached_tokens=response.cached_tokens,
             cost_known=response.cost_known,
             llm_calls=1,
         )
@@ -364,7 +366,9 @@ class AnswerSynthesizer:
                 Usage(
                     prompt_tokens=response.prompt_tokens,
                     completion_tokens=response.completion_tokens,
-                    estimated_cost_usd=response.cost_usd,
+                    estimated_cost=response.cost,
+                            cost_currency=response.cost_currency,
+                            cached_tokens=response.cached_tokens,
                     cost_known=response.cost_known,
                     llm_calls=1,
                 )

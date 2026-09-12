@@ -363,7 +363,7 @@ IDLE ──reset──► RUNNING ──finish(has_answer=true)──► SUCCESS
 
 - **超时兜底**：`agent.timeout_seconds`（默认 500）到期 → 立即用**已有证据**强制合成答案，
   状态 `TRUNCATED`；
-- **预算闸门**【原创增量 ④】：`agent.max_tokens` / `agent.max_cost_usd` 触顶 → 同上，
+- **预算闸门**【原创增量 ④】：`agent.max_tokens` / `agent.max_cost` 触顶 → 同上，
   并在返回值中标注 `budget_exceeded`；
 - **步数上限**：达到 `max_steps` → 强制合成，状态 `TRUNCATED`；
 - **证据为空即结束**：若连续 2 次 `gather_evidence` 未新增证据，自动执行 `answer_question`
@@ -389,7 +389,17 @@ IDLE ──reset──► RUNNING ──finish(has_answer=true)──► SUCCESS
 
 ### 5.2 配置模型分组
 
-`llm` / `embedding` / `ingest` / `retrieval` / `screening` / `answer` / `agent` / `metadata` / `index`。
+`llm` / `pricing` / `embedding` / `ingest` / `retrieval` / `screening` / `answer` / `agent` / `metadata` / `index`。
+
+**`pricing`（v1.3 新增）**：自备计价表（币种 + 输入/缓存命中/输出每百万 token 单价）。
+
+存在的理由很具体：litellm 的价格表**不收录**自建或代理的模型名（实测 `deepseek-v4-flash`
+不在其中）。缺失的后果不是"成本显示不出来"，而是 `estimated_cost` 恒为 0 →
+**成本闸门永远不触发**——一个看起来在工作、实际完全失效的闸门。
+
+币种是显式字段而非隐含约定：本项目面向中文语料，供应商多以人民币计价，
+把人民币数字写进名叫 `_usd` 的字段是错的。**`Usage.estimated_cost_usd` 因此更名为
+`estimated_cost`，并新增 `cost_currency`**（v1.3 破坏性变更，`--json` 输出同步调整）。
 
 模型工厂：`get_llm(role: Literal["main","summary","agent"])` 允许三个角色使用**不同模型**，
 支持"用便宜模型做筛选、用强模型做合成"的分级路由【原创增量 ④】。
@@ -451,7 +461,8 @@ IndexFingerprint = sha256(canonical_json({
   "citations": [{"evidence_key": "ev-1a2b3c4d", "citation": "(author2024title pages 3-4)",
                  "source_key": "…", "page_range": [3, 4], "relevance": 8}],
   "references": {"author2024title": "@article{…}"},
-  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "estimated_cost_usd": 0.0},
+  "usage": {"prompt_tokens": 0, "completion_tokens": 0, "cached_tokens": 0,
+            "estimated_cost": 0.0, "cost_currency": "CNY", "cost_known": true},
   "timing": {"retrieve_s": 0.0, "screen_s": 0.0, "synthesize_s": 0.0, "total_s": 0.0}
 }
 ```
@@ -513,3 +524,4 @@ IndexFingerprint = sha256(canonical_json({
 | v1 | 初稿 | — |
 | v1.1 | §5.3 索引指纹**移除** `source_dirs` | 原设计会导致 `stc index ./papers` 后 `stc ask`（不带路径）因指纹不同而报"索引不存在"。更根本的是概念错位：索引同一性应由"文本如何被表示"决定，而非"这次索引了哪些目录" |
 | v1.2 | §3.2 `fragment_id` **加入** `document_hash`；§3.1 摄入流程相应改为按 `source_key` 显式清理旧片段 | 见 §3.2 的变更说明 |
+| v1.3 | §5.2 新增 `pricing` 配置组；§7 用量字段由 `estimated_cost_usd` 改为 `estimated_cost` + `cost_currency` + `cached_tokens` + `cost_known` | 供应商以人民币计价，把人民币写进 `_usd` 字段是错的；缓存命中价便宜两个数量级，不区分会高估数倍；`cost_known` 区分"成本为 0"与"成本未知" |

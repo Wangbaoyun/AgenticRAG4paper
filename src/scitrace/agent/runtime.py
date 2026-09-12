@@ -106,7 +106,7 @@ class AgentRuntime:
         self.state = AgentState(question=question)
         self.budget = Budget(
             max_tokens=self.settings.agent.max_tokens,
-            max_cost_usd=self.settings.agent.max_cost_usd,
+            max_cost=self.settings.agent.max_cost,
         )
         # 配了成本上限、却拿不到可信成本 → 闸门实际上不生效。
         # 这种情况必须明确告知，否则用户会以为成本受到管控。
@@ -149,7 +149,7 @@ class AgentRuntime:
             len(self.state.evidence),
             len(answer.citations),
             self.timing.total_s,
-            result.usage.estimated_cost_usd,
+            result.usage.estimated_cost,
         )
         return result
 
@@ -194,7 +194,7 @@ class AgentRuntime:
                     Usage(
                         prompt_tokens=response.prompt_tokens,
                         completion_tokens=response.completion_tokens,
-                        estimated_cost_usd=response.cost_usd,
+                        estimated_cost=response.cost,
                         llm_calls=1,
                     )
                 )
@@ -343,4 +343,8 @@ class AgentRuntime:
 
     def status_snapshot(self) -> str:
         """当前状态串，供调试与流式输出使用。"""
-        return status_line(self.state, cost_usd=self.services.usage.estimated_cost_usd)
+        return status_line(
+            self.state,
+            cost=self.services.usage.estimated_cost,
+            currency=self.services.usage.cost_currency,
+        )

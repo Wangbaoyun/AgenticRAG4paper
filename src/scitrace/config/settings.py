@@ -235,7 +235,7 @@ class AgentSettings(_ConfigGroup):
     max_tokens: int | None = Field(
         default=None, ge=1, description="会话级 token 预算；None 表示不限"
     )
-    max_cost_usd: float | None = Field(
+    max_cost: float | None = Field(
         default=1.0, ge=0.0, description="会话级成本预算；None 表示不限"
     )
     context_token_limit: int = Field(default=32000, ge=1000)
@@ -283,6 +283,62 @@ class IndexSettings(_ConfigGroup):
     cache_embeddings: bool = True
 
 
+class PricingSettings(_ConfigGroup):
+    """模型计价表。
+
+    存在的理由很具体：litellm 的价格表**不收录**自建或代理的模型名，
+    实测 ``deepseek-v4-flash`` 就不在其中。缺失的后果不是"成本显示不出来"，
+    而是 ``estimated_cost`` 恒为 0 → **成本闸门永远不触发**——
+    一个看起来在工作、实际完全失效的闸门。
+
+    币种是显式字段而不是隐含约定：本项目面向中文语料，供应商多以人民币计价，
+    把人民币数字写进名叫 ``_usd`` 的字段是错的。宁可在输出里多一个
+    ``cost_currency``，也不要让读数的人猜。
+
+    缓存命中价单独列出：命中缓存的输入 token 便宜两个数量级（实测 0.02 元 vs 1 元
+    每百万），忽略它会把成本高估几倍——而重复的长提示词（本项目的合成提示词
+    每次都带完整证据集）命中率并不低。
+    """
+
+    currency: str = Field(default="CNY", description="计价币种，会随用量一并输出")
+    input_per_million: float | None = Field(
+        default=None, ge=0.0, description="输入（缓存未命中）每百万 token 单价"
+    )
+    input_cached_per_million: float | None = Field(
+        default=None, ge=0.0, description="输入（缓存命中）每百万 token 单价"
+    )
+    output_per_million: float | None = Field(
+        default=None, ge=0.0, description="输出每百万 token 单价"
+    )
+
+    @property
+    def configured(self) -> bool:
+        """是否至少配了输入与输出两项单价。"""
+        return self.input_per_million is not None and self.output_per_million is not None
+
+    def cost_of(
+        self, *, cached_tokens: int, uncached_tokens: int, completion_tokens: int
+    ) -> float:
+        """按 token 明细算价。
+
+        缓存命中价未配置时**退化用普通输入价**——宁可高估也不要漏算，
+        高估会让预算闸门偏保守，漏算会让它偏激进。
+        """
+        if not self.configured:
+            return 0.0
+        cached_price = (
+            self.input_cached_per_million
+            if self.input_cached_per_million is not None
+            else self.input_per_million
+        )
+        assert self.input_per_million is not None and self.output_per_million is not None  # noqa: S101
+        return (
+            cached_tokens / 1_000_000 * cached_price
+            + uncached_tokens / 1_000_000 * self.input_per_million
+            + completion_tokens / 1_000_000 * self.output_per_million
+        )
+
+
 class Settings(BaseSettings):
     """全部配置的聚合根。
 
@@ -304,6 +360,7 @@ class Settings(BaseSettings):
     )
 
     llm: LLMSettings = Field(default_factory=LLMSettings)
+    pricing: PricingSettings = Field(default_factory=PricingSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     ingest: IngestSettings = Field(default_factory=IngestSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)

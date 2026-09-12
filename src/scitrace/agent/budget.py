@@ -28,18 +28,18 @@ _EPSILON = 1e-9
 class Budget:
     """会话级预算。两个上限都可以为 ``None``，表示不限制。"""
 
-    def __init__(self, *, max_tokens: int | None = None, max_cost_usd: float | None = None) -> None:
+    def __init__(self, *, max_tokens: int | None = None, max_cost: float | None = None) -> None:
         if max_tokens is not None and max_tokens <= 0:
             raise ValueError(f"max_tokens 必须为正数或 None，得到 {max_tokens}")
-        if max_cost_usd is not None and max_cost_usd < 0:
-            raise ValueError(f"max_cost_usd 必须为非负数或 None，得到 {max_cost_usd}")
+        if max_cost is not None and max_cost < 0:
+            raise ValueError(f"max_cost 必须为非负数或 None，得到 {max_cost}")
         self.max_tokens = max_tokens
-        self.max_cost_usd = max_cost_usd
+        self.max_cost = max_cost
 
     @property
     def unlimited(self) -> bool:
         """是否完全没有限制。"""
-        return self.max_tokens is None and self.max_cost_usd is None
+        return self.max_tokens is None and self.max_cost is None
 
     def check(self, usage: Usage) -> str | None:
         """检查是否超限。
@@ -59,9 +59,9 @@ class Budget:
             # 这件事明确告诉用户，而不是让它悄悄过去。
             return None
         if (
-            self.max_cost_usd is not None
-            and not math.isclose(usage.estimated_cost_usd, self.max_cost_usd, abs_tol=_EPSILON)
-            and usage.estimated_cost_usd > self.max_cost_usd
+            self.max_cost is not None
+            and not math.isclose(usage.estimated_cost, self.max_cost, abs_tol=_EPSILON)
+            and usage.estimated_cost > self.max_cost
         ):
             return "成本预算超限"
         return None
@@ -69,11 +69,11 @@ class Budget:
     @property
     def cost_gate_active(self) -> bool:
         """成本上限是否被配置了。"""
-        return self.max_cost_usd is not None
+        return self.max_cost is not None
 
     def exhausted(self, usage: Usage) -> bool:
         """是否已经超限。"""
         return self.check(usage) is not None
 
     def __repr__(self) -> str:  # pragma: no cover - 仅用于排障
-        return f"Budget(max_tokens={self.max_tokens}, max_cost_usd={self.max_cost_usd})"
+        return f"Budget(max_tokens={self.max_tokens}, max_cost={self.max_cost})"

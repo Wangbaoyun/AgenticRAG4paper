@@ -306,5 +306,5 @@ class FakeLLMClient:
             model=self.model_name,
             prompt_tokens=10,
             completion_tokens=5,
-            cost_usd=self._cost,
+            cost=self._cost,
         )

@@ -6,14 +6,14 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 生成时间 | 2026-09-12 10:18:31 +0800 |
+| 生成时间 | 2026-09-12 10:40:39 +0800 |
 | 目标项目（待审计） | `/home/wby/MyPaperQA` |
 | 参考实现（比对基准） | `/home/wby/PaperQA` |
 | 上游 HEAD commit | `0a03fb09619c566470d07ab443ca8a7376b11d00` |
 | 上游 HEAD 提交信息 | chore: 移除不再使用的上游教程与 CI 配置 |
 | 参考侧文件集来源 | git ls-files（索引中的跟踪文件） |
 | 上游 HEAD 跟踪文件数 | 172（另有 0 个路径在 HEAD 中不存在，已跳过） |
-| 目标侧纳入审计的文件数 | 145 |
+| 目标侧纳入审计的文件数 | 146 |
 | n-gram 长度（源码 / 文档） | 8 / 12 |
 | 整体 containment 阈值 | 2.00% |
 | 单文件 containment 阈值 | 5.00% |
@@ -26,19 +26,19 @@
 
 | 检查项 | 状态 | 关键指标 | 阈值 |
 | --- | --- | --- | --- |
-| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.4845%（Jaccard 0.2524%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
+| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.4809%（Jaccard 0.2523%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
 | 2. 逐行精确复制 | ✅ 通过 | 逐字相同行 365（实质性 0 / 通用惯用式 365）；最长对齐片段 2 行 | 实质性 ≤ 0 行 且 对齐片段 < 5 行 |
 | 3. 字符串字面量相似度（阈值 0.60） | ✅ 通过 | 违规相似串 0 条（≥0.60 相似串 40 条）；专有标识符违规 0 处（说明性提及 10 处） | 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0 |
 | 4. 依赖审计 | ✅ 通过 | 禁用依赖 0 处；警告 0 处 | 禁用依赖 = 0 |
-| 5. 资产 / 文档审计（文档 n=12） | ✅ 通过 | 哈希相同资产 0 个；文档整体 containment 0.0702%（最高 0.6594%） | 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00% |
+| 5. 资产 / 文档审计（文档 n=12） | ✅ 通过 | 哈希相同资产 0 个；文档整体 containment 0.0673%（最高 0.6594%） | 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00% |
 
 ## 1. Token n-gram 重叠（n=8）
 
-**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.4845%（Jaccard 0.2524%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
+**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.4809%（Jaccard 0.2523%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
 
 - 上游参考 n-gram 池：**82,410** 个（来自 58 个 `.py` 文件）
-- 目标 n-gram 池：**89,156** 个（扫描 93 个 `.py` 文件）
-- 交集：**432** 个
+- 目标 n-gram 池：**90,461** 个（扫描 94 个 `.py` 文件）
+- 交集：**435** 个
 
 #### 重叠最高的前 20 个目标文件
 
@@ -47,28 +47,28 @@
 | 1 | `src/scitrace/ports/common.py` | 13.8298% | 13 | 94 | 0 |
 | 2 | `src/scitrace/ports/fulltext_index.py` | 9.0909% | 14 | 154 | 0 |
 | 3 | `src/scitrace/domain/evidence.py` | 8.1218% | 16 | 197 | 0 |
-| 4 | `src/scitrace/ports/llm.py` | 5.8981% | 22 | 373 | 0 |
-| 5 | `src/scitrace/domain/session.py` | 5.8458% | 47 | 804 | 0 |
-| 6 | `src/scitrace/domain/fragment.py` | 5.7743% | 22 | 381 | 0 |
+| 4 | `src/scitrace/domain/fragment.py` | 5.7743% | 22 | 381 | 0 |
+| 5 | `src/scitrace/domain/session.py` | 5.5556% | 47 | 846 | 0 |
+| 6 | `src/scitrace/ports/llm.py` | 5.5138% | 22 | 399 | 0 |
 | 7 | `src/scitrace/domain/source.py` | 4.8876% | 50 | 1,023 | 0 |
-| 8 | `src/scitrace/config/settings.py` | 4.4051% | 97 | 2,202 | 0 |
+| 8 | `src/scitrace/config/settings.py` | 4.0894% | 97 | 2,372 | 0 |
 | 9 | `src/scitrace/ports/vector_index.py` | 3.4146% | 7 | 205 | 0 |
 | 10 | `src/scitrace/adapters/llm/embedding.py` | 3.2787% | 28 | 854 | 0 |
 | 11 | `src/scitrace/util/hashing.py` | 2.7778% | 10 | 360 | 0 |
 | 12 | `src/scitrace/ports/metadata.py` | 2.7322% | 5 | 183 | 0 |
 | 13 | `tests/fakes.py` | 2.4506% | 36 | 1,469 | 0 |
-| 14 | `src/scitrace/agent/state.py` | 2.0619% | 10 | 485 | 0 |
-| 15 | `src/scitrace/pipeline/synthesis.py` | 1.9246% | 25 | 1,299 | 0 |
+| 14 | `src/scitrace/agent/state.py` | 2.0367% | 10 | 491 | 0 |
+| 15 | `src/scitrace/pipeline/synthesis.py` | 1.9069% | 25 | 1,311 | 0 |
 | 16 | `src/scitrace/service/store.py` | 1.8182% | 12 | 660 | 0 |
 | 17 | `src/scitrace/adapters/metadata/http_base.py` | 1.7801% | 34 | 1,910 | 0 |
-| 18 | `src/scitrace/adapters/llm/litellm_client.py` | 1.6371% | 12 | 733 | 0 |
-| 19 | `src/scitrace/pipeline/retrieval.py` | 1.6310% | 16 | 981 | 0 |
+| 18 | `src/scitrace/pipeline/retrieval.py` | 1.6310% | 16 | 981 | 0 |
+| 19 | `benchmarks/screening_ablation.py` | 1.5598% | 9 | 577 | 0 |
 | 20 | `tests/test_util.py` | 1.5544% | 12 | 772 | 0 |
 
 **✅ 统计超标但判定通过的文件（containment > 5.00%，但最长公共片段 < 25 token）：**
-- `src/scitrace/ports/llm.py` → containment 5.8981%，最长公共片段 0 token
-- `src/scitrace/domain/session.py` → containment 5.8458%，最长公共片段 0 token
 - `src/scitrace/domain/fragment.py` → containment 5.7743%，最长公共片段 0 token
+- `src/scitrace/domain/session.py` → containment 5.5556%，最长公共片段 0 token
+- `src/scitrace/ports/llm.py` → containment 5.5138%，最长公共片段 0 token
 
 > 这类文件的重叠来自**框架与领域的趋同**（同用 pydantic 表达同一领域概念时，字段声明、装饰器与类型标注等脚手架序列必然重合），属于著作权法上的「表达与思想合并」情形，不构成复制证据。上表的共享 n-gram 示例可人工复核。
 
@@ -85,9 +85,9 @@
 | `src/scitrace/domain/evidence.py` | `( cls , value : str ) ->` |
 | `src/scitrace/domain/evidence.py` | `) @ field_validator ( "summary" ) @ classmethod` |
 | `src/scitrace/domain/evidence.py` | `, value : str ) -> str :` |
-| `src/scitrace/ports/llm.py` | `( default = 0 , ge = 0` |
-| `src/scitrace/ports/llm.py` | `, Any ] = Field ( default_factory =` |
-| `src/scitrace/ports/llm.py` | `: bool = Field ( default = True` |
+| `src/scitrace/domain/fragment.py` | `( cls , value : str ) ->` |
+| `src/scitrace/domain/fragment.py` | `, value : str ) -> str :` |
+| `src/scitrace/domain/fragment.py` | `: dict [ str , str ] =` |
 | `src/scitrace/domain/session.py` | `( cls , value : str ) ->` |
 | `src/scitrace/domain/session.py` | `( default = 0 , ge = 0` |
 | `src/scitrace/domain/session.py` | `( self , key : str ) ->` |
@@ -99,7 +99,7 @@
 **状态：** ✅ 通过　　**关键指标：** 逐字相同行 365（实质性 0 / 通用惯用式 365）；最长对齐片段 2 行　　**阈值：** 实质性 ≤ 0 行 且 对齐片段 < 5 行
 
 - 上游可比对代码行索引：**12,237** 条唯一非空行（`.py`，已剔除 <12 字符与通用样板）
-- 目标侧扫描的非空行：**16,372** 行
+- 目标侧扫描的非空行：**16,595** 行
 - 命中（逐字相同）：**365** 行，其中 **实质性 0** 行、通用惯用式 365 行
 - 属于通用样板（import / `if __name__` 等）而完全忽略：**0** 行
 - 行号同步递增的对齐片段：**5** 段，最长 **2** 行
@@ -136,9 +136,9 @@
 | # | 长度 | 目标文件 | 目标行区间 | 上游文件 | 上游行区间 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 2 | `src/scitrace/config/settings.py` | 263–264 | `src/paperqa/settings.py` | 132–133 |
-| 2 | 2 | `src/scitrace/domain/session.py` | 68–69 | `src/paperqa/settings.py` | 160–161 |
-| 3 | 2 | `src/scitrace/domain/session.py` | 150–151 | `src/paperqa/settings.py` | 132–133 |
-| 4 | 2 | `src/scitrace/ports/llm.py` | 75–76 | `src/paperqa/settings.py` | 160–161 |
+| 2 | 2 | `src/scitrace/domain/session.py` | 77–78 | `src/paperqa/settings.py` | 160–161 |
+| 3 | 2 | `src/scitrace/domain/session.py` | 162–163 | `src/paperqa/settings.py` | 132–133 |
+| 4 | 2 | `src/scitrace/ports/llm.py` | 81–82 | `src/paperqa/settings.py` | 160–161 |
 | 5 | 2 | `src/scitrace/util/hashing.py` | 53–54 | `src/paperqa/utils.py` | 118–119 |
 
 ## 3. 字符串字面量相似度（阈值 0.60）
@@ -146,7 +146,7 @@
 **状态：** ✅ 通过　　**关键指标：** 违规相似串 0 条（≥0.60 相似串 40 条）；专有标识符违规 0 处（说明性提及 10 处）　　**阈值：** 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0
 
 - 上游字符串字面量（≥20 字符，已跳过 docstring）：**1,778** 条
-- 目标字符串字面量（≥20 字符，已跳过 docstring）：**707** 条
+- 目标字符串字面量（≥20 字符，已跳过 docstring）：**723** 条
 - 与上游最相似串相似度 ≥ 0.60 的目标串：**40** 条
 - 其中**判定为违规**（实际匹配字符数 ≥ 32）：**0** 条
 - 说明：相似度高但匹配字符数不足的字符串，多为 DOI / URL / arXiv 编号 / 作者名 / 纯标识符等**事实性短串**（DOI 天生彼此相似），不含受保护表达，因此不判失败；可用 `--min-matched-chars` 调整该门槛。
@@ -223,7 +223,7 @@ _无警告。_
 
 ## 5. 资产 / 文档审计（文档 n=12）
 
-**状态：** ✅ 通过　　**关键指标：** 哈希相同资产 0 个；文档整体 containment 0.0702%（最高 0.6594%）　　**阈值：** 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00%
+**状态：** ✅ 通过　　**关键指标：** 哈希相同资产 0 个；文档整体 containment 0.0673%（最高 0.6594%）　　**阈值：** 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00%
 
 #### 5.1 资产内容哈希（SHA-256）
 
@@ -235,15 +235,15 @@ _未发现与上游 git 跟踪文件内容完全相同的资产。_
 #### 5.2 文档 token n-gram（n=12）
 
 - 上游文本文件参与比对：**162** 个，n-gram 池 **1,558,270** 个
-- 目标 `.md`/`.rst` 文件：**7** 个，n-gram 池 **32,759** 个
-- 整体 containment **0.0702%**，Jaccard **0.0014%**
+- 目标 `.md`/`.rst` 文件：**7** 个，n-gram 池 **34,152** 个
+- 整体 containment **0.0673%**，Jaccard **0.0014%**
 
 | # | 目标文档 | containment | 共有 n-gram | 文档 n-gram 总数 |
 | --- | --- | --- | --- | --- |
 | 1 | `README.md` | 0.6594% | 14 | 2,123 |
-| 2 | `docs/EXPERIMENTS.md` | 0.3166% | 7 | 2,211 |
-| 3 | `tools/README.md` | 0.2564% | 2 | 780 |
-| 4 | `docs/SPEC.md` | 0.0998% | 9 | 9,019 |
+| 2 | `tools/README.md` | 0.2564% | 2 | 780 |
+| 3 | `docs/EXPERIMENTS.md` | 0.2174% | 7 | 3,220 |
+| 4 | `docs/SPEC.md` | 0.0957% | 9 | 9,403 |
 | 5 | `docs/重构方案.md` | 0.0843% | 5 | 5,934 |
 | 6 | `docs/PROVENANCE.md` | 0.0742% | 5 | 6,736 |
 | 7 | `docs/COMPARISON.md` | 0.0648% | 4 | 6,170 |

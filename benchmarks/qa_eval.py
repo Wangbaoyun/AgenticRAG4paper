@@ -78,7 +78,8 @@ class CaseResult:
     citation_count: int
     dangling_citations: int
     duration_s: float
-    cost_usd: float
+    cost: float
+    currency: str = "USD"
 
     @property
     def keyword_hit(self) -> bool:
@@ -154,7 +155,12 @@ class EvaluationReport:
     def cost_per_question(self) -> float:
         if not self.results:
             return 0.0
-        return sum(item.cost_usd for item in self.results) / self.total
+        return sum(item.cost for item in self.results) / self.total
+
+    @property
+    def cost_currency(self) -> str:
+        """本次评测的计价币种（取首题结果；空报告时为 USD）。"""
+        return self.results[0].currency if self.results else "USD"
 
     @property
     def mean_latency_s(self) -> float:
@@ -170,7 +176,8 @@ class EvaluationReport:
             "answer_coverage": round(self.answer_coverage, 4),
             "citation_resolution_rate": round(self.citation_resolution_rate, 4),
             "hallucination_rate": round(self.hallucination_rate, 4),
-            "cost_per_question_usd": round(self.cost_per_question, 6),
+            "cost_per_question": round(self.cost_per_question, 6),
+            "cost_currency": self.cost_currency,
             "mean_latency_s": round(self.mean_latency_s, 3),
         }
 
@@ -226,16 +233,18 @@ async def run_evaluation(
             refused = result.answer.refused or is_refusal(answer)
             citations = len(result.answer.citations)
             dangling = result.usage.dangling_citations
-            cost = result.usage.estimated_cost_usd
+            cost = result.usage.estimated_cost
+            currency = result.usage.cost_currency
         except Exception as error:  # noqa: BLE001 - 单题失败不应中断整个评测
             logger.exception("评测题 %s 执行失败", case.identifier)
-            status, answer, refused, citations, dangling, cost = (
+            status, answer, refused, citations, dangling, cost, currency = (
                 "ERROR",
                 f"执行失败：{error}",
                 True,
                 0,
                 0,
                 0.0,
+                "USD",
             )
         report.results.append(
             CaseResult(
@@ -246,7 +255,7 @@ async def run_evaluation(
                 citation_count=citations,
                 dangling_citations=dangling,
                 duration_s=time.perf_counter() - started,
-                cost_usd=cost,
+                cost=cost,
             )
         )
         logger.info("[%s] %s → %s", case.identifier, case.question[:40], status)

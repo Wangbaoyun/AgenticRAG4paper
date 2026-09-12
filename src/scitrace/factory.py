@@ -174,6 +174,7 @@ def _build_llms(settings: Settings) -> dict[LLMRole, LLMClient]:
             temperature=settings.llm.temperature,
             max_tokens=settings.llm.max_tokens,
             timeout_s=settings.llm.timeout_s,
+            pricing=settings.pricing,
         )
     return clients
 

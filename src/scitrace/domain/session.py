@@ -63,12 +63,21 @@ class Usage(SanitizedModel):
 
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
-    estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    cached_tokens: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "``prompt_tokens`` 中命中提示词缓存的部分。它**已包含在** ``prompt_tokens`` 内，"
+            "单独记是因为缓存命中价通常便宜两个数量级——不区分会让成本高估数倍。"
+        ),
+    )
+    estimated_cost: float = Field(default=0.0, ge=0.0)
+    cost_currency: str = Field(default="USD", description="``estimated_cost`` 的币种")
     cost_known: bool = Field(
         default=True,
         description=(
             "本次会话的成本是否**可信**。False 表示至少有一次调用的模型不在价格表中，"
-            "``estimated_cost_usd`` 只是下界（通常为 0）。"
+            "``estimated_cost`` 只是下界（通常为 0）。"
             "**必须显式标记**：把未知成本静默记成 0，会让成本闸门看起来在工作而实际从不触发——"
             "这是本项目实测踩过的坑（deepseek-v4-flash 不在 litellm 价格表中）。"
         ),
@@ -104,9 +113,12 @@ class Usage(SanitizedModel):
         merged = {
             name: getattr(self, name) + getattr(other, name)
             for name in type(self).model_fields
-            if name != "cost_known"
+            if name not in {"cost_known", "cost_currency"}
         }
         merged["cost_known"] = self.cost_known and other.cost_known
+        # 币种不是可加量：同一次会话内计价配置是同一个，取自身即可。
+        # 把两个币种"相加"会得到一个没有意义的字符串。
+        merged["cost_currency"] = self.cost_currency
         return type(self)(**merged)
 
 

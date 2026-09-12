@@ -130,7 +130,7 @@ def _answer_payload(result, session_id: str) -> dict:  # noqa: ANN001
         "usage": {
             "prompt_tokens": result.usage.prompt_tokens,
             "completion_tokens": result.usage.completion_tokens,
-            "estimated_cost_usd": result.usage.estimated_cost_usd,
+            "estimated_cost": result.usage.estimated_cost,
             "llm_calls": result.usage.llm_calls,
         },
         "timing": {
@@ -158,7 +158,7 @@ def _render_answer(payload: dict) -> str:
     lines.append(
         f"\n状态：{payload['status']}　耗时 {payload['timing']['total_s']:.1f}s　"
         f"token {usage['prompt_tokens'] + usage['completion_tokens']}　"
-        f"成本 ${usage['estimated_cost_usd']:.4f}"
+        f"成本 ${usage['estimated_cost']:.4f}"
     )
     if payload["notes"]:
         lines.append(f"备注：{', '.join(payload['notes'])}")

@@ -22,20 +22,20 @@ class TestCostGate:
     """① 成本不可信时闸门必须退化为纯 token 闸门，而不是假装在工作。"""
 
     def test_unknown_cost_disables_cost_gate(self) -> None:
-        budget = Budget(max_cost_usd=1.0)
-        usage = Usage(estimated_cost_usd=999.0, cost_known=False)
+        budget = Budget(max_cost=1.0)
+        usage = Usage(estimated_cost=999.0, cost_known=False)
         assert budget.check(usage) is None, "成本不可信时不该用它做判断"
 
     def test_known_cost_still_gates(self) -> None:
-        budget = Budget(max_cost_usd=1.0)
-        assert budget.check(Usage(estimated_cost_usd=999.0, cost_known=True)) is not None
+        budget = Budget(max_cost=1.0)
+        assert budget.check(Usage(estimated_cost=999.0, cost_known=True)) is not None
 
     def test_token_gate_works_even_when_cost_unknown(self) -> None:
-        budget = Budget(max_tokens=100, max_cost_usd=1.0)
+        budget = Budget(max_tokens=100, max_cost=1.0)
         assert budget.check(Usage(prompt_tokens=101, cost_known=False)) == "token 预算超限"
 
     def test_cost_gate_active_flag(self) -> None:
-        assert Budget(max_cost_usd=1.0).cost_gate_active is True
+        assert Budget(max_cost=1.0).cost_gate_active is True
         assert Budget(max_tokens=10).cost_gate_active is False
 
     def test_merge_propagates_unknown_cost(self) -> None:
@@ -166,3 +166,62 @@ class TestTitleInference:
         from scitrace.config import MetadataSettings
 
         assert MetadataSettings().llm_title_inference is False
+
+
+class TestPricing:
+    """自备计价表：litellm 价格表不收录自建/代理模型名。"""
+
+    def test_cost_computation(self) -> None:
+        from scitrace.config import PricingSettings
+
+        pricing = PricingSettings(
+            input_per_million=1.0, input_cached_per_million=0.02, output_per_million=4.0
+        )
+        cost = pricing.cost_of(
+            cached_tokens=500_000, uncached_tokens=500_000, completion_tokens=100_000
+        )
+        assert cost == pytest.approx(0.01 + 0.5 + 0.4)
+
+    def test_missing_cache_price_falls_back_to_full_price(self) -> None:
+        """缓存价未配时退化用普通输入价——宁可高估也不漏算。
+
+        高估会让预算闸门偏保守，漏算会让它偏激进；两者不对称，所以选保守的那边。
+        """
+        from scitrace.config import PricingSettings
+
+        pricing = PricingSettings(input_per_million=1.0, output_per_million=4.0)
+        cost = pricing.cost_of(cached_tokens=1_000_000, uncached_tokens=0, completion_tokens=0)
+        assert cost == pytest.approx(1.0)
+
+    def test_not_configured_means_zero(self) -> None:
+        from scitrace.config import PricingSettings
+
+        assert PricingSettings().configured is False
+        assert PricingSettings().cost_of(cached_tokens=10, uncached_tokens=10, completion_tokens=10) == 0.0
+
+    def test_currency_is_explicit(self) -> None:
+        """币种是显式字段：把人民币数字写进名叫 _usd 的字段是错的。"""
+        from scitrace.config import PricingSettings
+        from scitrace.domain.session import Usage
+
+        assert PricingSettings().currency == "CNY"
+        assert Usage().cost_currency == "USD"
+        assert "estimated_cost" in Usage.model_fields
+        assert "estimated_cost_usd" not in Usage.model_fields
+
+    def test_merge_does_not_add_currency(self) -> None:
+        """币种不是可加量：把两个币种"相加"会得到一个没有意义的字符串。"""
+        from scitrace.domain.session import Usage
+
+        merged = Usage(estimated_cost=1.0, cost_currency="CNY").merge(
+            Usage(estimated_cost=2.0, cost_currency="CNY")
+        )
+        assert merged.estimated_cost == pytest.approx(3.0)
+        assert merged.cost_currency == "CNY"
+
+    def test_cached_tokens_are_tracked(self) -> None:
+        """缓存命中价便宜两个数量级，不区分会让成本高估数倍。"""
+        from scitrace.domain.session import Usage
+
+        merged = Usage(cached_tokens=100).merge(Usage(cached_tokens=50))
+        assert merged.cached_tokens == 150

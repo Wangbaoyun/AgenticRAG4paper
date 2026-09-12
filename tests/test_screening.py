@@ -187,7 +187,7 @@ class TestFaultTolerance:
         await screener.screen("问题", [fragment(0), fragment(1)], sources={"src-1": source()})
         assert screener.last_usage.llm_calls == 2
         assert screener.last_usage.prompt_tokens == 20
-        assert screener.last_usage.estimated_cost_usd == pytest.approx(0.002)
+        assert screener.last_usage.estimated_cost == pytest.approx(0.002)
 
     async def test_usage_resets_between_calls(self) -> None:
         llm = FakeLLMClient([payload("摘要", 9), payload("摘要", 9)])

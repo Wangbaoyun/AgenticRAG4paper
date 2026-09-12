@@ -51,7 +51,7 @@ class AgentState(BaseModel):
         return len(fresh)
 
 
-def status_line(state: AgentState, *, cost_usd: float = 0.0) -> str:
+def status_line(state: AgentState, *, cost: float = 0.0, currency: str = "USD") -> str:
     """生成注入下一轮提示的状态串（SPEC §4.2）。
 
     状态串的作用常被低估：它让模型在不消耗额外调用的情况下知道
@@ -63,7 +63,7 @@ def status_line(state: AgentState, *, cost_usd: float = 0.0) -> str:
         if state.scoped_source_keys is None
         else f"{state.relevant_paper_count}/{state.total_paper_count}"
     )
-    return f"papers={papers} evidence={len(state.evidence)} cost=${cost_usd:.4f}"
+    return f"papers={papers} evidence={len(state.evidence)} cost={cost:.4f} {currency}"
 
 
 class ToolOutcome(BaseModel):

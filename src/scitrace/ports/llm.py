@@ -70,11 +70,17 @@ class LLMResponse(BaseModel):
     model: str = ""
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
-    cost_usd: float = Field(default=0.0, ge=0.0)
+    #: 本次调用的估算成本。单位由 ``cost_currency`` 明确给出——
+    #: 供应商多以人民币计价，把人民币数字塞进名叫 ``_usd`` 的字段是错的。
+    cost: float = Field(default=0.0, ge=0.0)
+    cost_currency: str = Field(default="USD", description="``cost`` 的币种")
+    #: 命中提示词缓存的输入 token 数。缓存命中价通常便宜两个数量级，
+    #: 忽略它会把成本高估数倍。
+    cached_tokens: int = Field(default=0, ge=0)
     cost_known: bool = Field(
         default=True,
         description=(
-            "成本是否可信。模型不在价格表中时为 False，此时 ``cost_usd`` 只是下界。"
+            "成本是否可信。模型不在任何价格表中时为 False，此时 ``cost`` 只是下界。"
             "**不允许静默记 0**：那会让上层的成本闸门看起来在工作而从不触发。"
         ),
     )

@@ -210,24 +210,24 @@ class TestBudget:
     def test_exactly_at_limit_is_not_exceeded(self) -> None:
         """用到上限是正常结束，不是超限。"""
         assert Budget(max_tokens=100).check(Usage(prompt_tokens=100)) is None
-        assert Budget(max_cost_usd=1.0).check(Usage(estimated_cost_usd=1.0)) is None
+        assert Budget(max_cost=1.0).check(Usage(estimated_cost=1.0)) is None
 
     def test_float_tolerance(self) -> None:
         """浮点累加误差不该触发"明明刚好用完却报超限"。"""
-        budget = Budget(max_cost_usd=0.3)
-        assert budget.check(Usage(estimated_cost_usd=0.1 + 0.2)) is None
+        budget = Budget(max_cost=0.3)
+        assert budget.check(Usage(estimated_cost=0.1 + 0.2)) is None
 
     def test_token_over_limit(self) -> None:
         assert Budget(max_tokens=100).check(Usage(prompt_tokens=101)) is not None
 
     def test_cost_over_limit(self) -> None:
-        assert Budget(max_cost_usd=1.0).check(Usage(estimated_cost_usd=1.5)) is not None
+        assert Budget(max_cost=1.0).check(Usage(estimated_cost=1.5)) is not None
 
     def test_invalid_arguments(self) -> None:
         with pytest.raises(ValueError):
             Budget(max_tokens=0)
         with pytest.raises(ValueError):
-            Budget(max_cost_usd=-1)
+            Budget(max_cost=-1)
 
 
 class TestTools:
@@ -352,7 +352,7 @@ class TestTerminationConditions:
 
     async def test_budget_truncates(self, tmp_path: Path) -> None:
         factory = FakeServicesFactory(tmp_path)
-        factory.settings.agent.max_cost_usd = 0.0
+        factory.settings.agent.max_cost = 0.0
         factory.settings.agent.max_tokens = 1
         services = await factory.build()
         factory.llm_agent.complete = await looping_llm()  # type: ignore[method-assign]

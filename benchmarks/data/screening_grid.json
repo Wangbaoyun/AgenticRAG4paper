@@ -1,0 +1,82 @@
+[
+  {
+    "strategy": "dense",
+    "backend": "llm",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.3446,
+    "tokens": 567524,
+    "mean_latency_s": 21.3
+  },
+  {
+    "strategy": "dense",
+    "backend": "cross_encoder",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.196,
+    "tokens": 499401,
+    "mean_latency_s": 19.6
+  },
+  {
+    "strategy": "dense_mmr",
+    "backend": "llm",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 0.9738,
+    "tokens": 459278,
+    "mean_latency_s": 16.3
+  },
+  {
+    "strategy": "dense_mmr",
+    "backend": "cross_encoder",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 0.8845,
+    "tokens": 389261,
+    "mean_latency_s": 14.2
+  },
+  {
+    "strategy": "hybrid_rrf",
+    "backend": "llm",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.2323,
+    "tokens": 547166,
+    "mean_latency_s": 13.9
+  },
+  {
+    "strategy": "hybrid_rrf",
+    "backend": "cross_encoder",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.1308,
+    "tokens": 512948,
+    "mean_latency_s": 15.1
+  },
+  {
+    "strategy": "hybrid_rrf_rerank",
+    "backend": "llm",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.2258,
+    "tokens": 571452,
+    "mean_latency_s": 20.4
+  },
+  {
+    "strategy": "hybrid_rrf_rerank",
+    "backend": "cross_encoder",
+    "behavior_correctness": 1.0,
+    "answer_coverage": 1.0,
+    "citation_resolution_rate": 1.0,
+    "cost_cny": 1.2301,
+    "tokens": 560286,
+    "mean_latency_s": 19.2
+  }
+]
