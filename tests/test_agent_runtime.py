@@ -324,6 +324,70 @@ class TestDeterministicMode:
         assert result.usage.llm_calls >= 2
         assert result.usage.total_tokens > 0
 
+    async def test_reported_usage_is_per_session_not_process_cumulative(
+        self, tmp_path: Path
+    ) -> None:
+        """**回归测试**：``result.usage`` 必须是**本次会话**的用量。
+
+        ``Services.usage`` 跨多次 ``ask()`` 持续累加。直接把它当会话用量，
+        评测算出的"每题成本/token/调用数"就全是累计值——
+        实测一整轮 9 题评测因此作废（每题都报同一个递增数）。
+        """
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+        first = await AgentRuntime(services=services, question="Q").run()
+        second = await AgentRuntime(services=services, question="Q").run()
+
+        assert first.usage.llm_calls > 0
+        assert second.usage.llm_calls == first.usage.llm_calls, "第二次报的是累计值"
+        assert second.usage.total_tokens == first.usage.total_tokens
+        # 进程级累加器仍然如实保留总量，会话用量只是它的切片
+        assert services.usage.llm_calls == first.usage.llm_calls + second.usage.llm_calls
+        assert services.usage.total_tokens == first.usage.total_tokens * 2
+
+    async def test_budget_applies_per_session_not_to_the_whole_process(
+        self, tmp_path: Path
+    ) -> None:
+        """**回归测试**：``agent.max_tokens`` 是**会话级**预算。
+
+        实测事故：一整轮 9 题评测共用同一个 ``services``，第一题烧穿预算后，
+        其余 8 题全都在进门时被判超支——``actions == 0``、``evidence == 0``、
+        直接拒答。用户看到的是"agentic 模式在这批题上全线失败"，
+        而真实原因是一个跨题泄漏的累加器。
+        """
+        factory = FakeServicesFactory(tmp_path)
+        factory.settings.agent.max_steps = 3
+        services = await factory.build()
+        # 必须用"永不主动结束"的模型，否则循环一步就退出，
+        # 而预算检查发生在**每轮开头**——根本不会被执行到。
+        factory.llm_agent.complete = await looping_llm()  # type: ignore[method-assign]
+        probe = await AgentRuntime(services=services, question="Q", mode="agentic").run()
+        single_session_tokens = probe.usage.total_tokens
+        assert single_session_tokens > 0
+
+        # 阈值刚好容得下一次会话，容不下两次
+        factory.settings.agent.max_tokens = single_session_tokens + 1
+        second = await AgentRuntime(services=services, question="Q", mode="agentic").run()
+        assert "budget_exceeded" not in second.notes, "第二题被第一题的花费挤掉了预算"
+        assert second.usage.total_tokens <= single_session_tokens + 1
+
+    async def test_usage_since_handles_an_untouched_baseline(self) -> None:
+        """基线未动时增量就是自身；``cost_known`` 取两者的逻辑与。"""
+        from scitrace.domain.session import Usage
+
+        baseline = Usage(prompt_tokens=100, completion_tokens=50, cost_known=False)
+        current = Usage(
+            prompt_tokens=180, completion_tokens=90, estimated_cost=0.3,
+            cost_currency="CNY", cost_known=True,
+        )
+        delta = current.since(baseline)
+        assert delta.prompt_tokens == 80
+        assert delta.completion_tokens == 40
+        assert delta.estimated_cost == pytest.approx(0.3)
+        assert delta.cost_currency == "CNY"
+        assert delta.cost_known is False, "有一次读数不可信，增量成本就不可信"
+        assert current.since(current).is_identity, "与自身之差必须是单位元"
+
     async def test_session_is_persisted(self, tmp_path: Path) -> None:
         factory = FakeServicesFactory(tmp_path)
         services = await factory.build()

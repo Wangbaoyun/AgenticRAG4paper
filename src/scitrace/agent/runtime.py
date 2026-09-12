@@ -114,12 +114,23 @@ class AgentRuntime:
             self.state.notes.append("cost_gate_inactive")
         self.timing = StageTiming()
         self._step = 0
+        # run() 会把它重置为进入时的快照；先初始化，使 status_snapshot()
+        # 在 run() 之前调用也能得到一个（空）增量而不是 AttributeError。
+        self._usage_baseline = self.services.usage
 
     # ---------------------------------------------------------------- 入口 --
 
     async def run(self) -> AgentRunResult:
-        """执行一次完整的问答。"""
+        """执行一次完整的问答。
+
+        ``Services.usage`` 是**跨多次调用**持续累加的进程级累加器，而本方法
+        产出的是一次**会话**的用量。因此这里先取一份基线快照，会话用量与
+        预算判断都用相对基线的增量——否则 ``agent.max_cost`` 这个
+        "会话级预算"会退化成"整个进程的预算"，同一进程里第二题起全部
+        在进门时被判超支（实测踩到过，见 :meth:`Usage.since`）。
+        """
         started = time.perf_counter()
+        self._usage_baseline = self.services.usage
         status = SessionStatus.FAIL
         try:
             if self.mode == "deterministic":
@@ -138,7 +149,7 @@ class AgentRuntime:
             answer=answer,
             status=status,
             actions=list(self.state.actions),
-            usage=self.services.usage,
+            usage=self.session_usage,
             timing=self.timing,
             notes=list(self.state.notes),
         )
@@ -186,7 +197,7 @@ class AgentRuntime:
         # 强制收尾的合成在作用域之外执行（见模块 docstring）。
         with anyio.move_on_after(self.settings.agent.timeout_seconds) as scope:
             while self._step < self.settings.agent.max_steps:
-                if self.budget.exhausted(self.services.usage):
+                if self.budget.exhausted(self.session_usage):
                     termination = "budget_exceeded"
                     break
                 response = await self.services.llm("agent").complete(messages, tools=specs)
@@ -355,10 +366,19 @@ class AgentRuntime:
             logger.warning("会话持久化失败（不影响本次结果）：%s", error)
             return ""
 
+    @property
+    def session_usage(self) -> Usage:
+        """**本次会话**的用量（相对进入 :meth:`run` 时的基线增量）。
+
+        ``run`` 尚未开始时基线与当前值相同，因此这里自然得到一份空用量。
+        """
+        return self.services.usage.since(self._usage_baseline)
+
     def status_snapshot(self) -> str:
         """当前状态串，供调试与流式输出使用。"""
+        usage = self.session_usage
         return status_line(
             self.state,
-            cost=self.services.usage.estimated_cost,
-            currency=self.services.usage.cost_currency,
+            cost=usage.estimated_cost,
+            currency=usage.cost_currency,
         )

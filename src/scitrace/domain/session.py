@@ -151,6 +151,33 @@ class Usage(SanitizedModel):
             if name not in {"cost_currency", "cost_known"}
         )
 
+    def since(self, baseline: Self) -> Self:
+        """相对某个基线快照的增量，用于把"进程累计用量"切成"单次会话用量"。
+
+        ``Services.usage`` 是**跨多次** :func:`~scitrace.api.ask` 持续累加的累加器。
+        直接把它当作某一次会话的用量会同时坏掉两件事：
+
+        1. 评测算出的"每题成本/token/调用数"其实是**累计值**；
+        2. ``agent.max_cost`` 这个**会话级**预算变成"整个进程的预算"——
+           实测后果：同一进程里第一题烧穿预算后，后续每一题都在进门时
+           被判超支，直接拒答，且 ``actions == 0``（一次工具都没调）。
+           一整轮 9 题评测因此全部作废。
+
+        Args:
+            baseline: 本次会话开始前的用量快照。
+
+        Returns:
+            两者之差；币种取自身的，``cost_known`` 取两者的逻辑与。
+        """
+        data = {
+            name: getattr(self, name) - getattr(baseline, name)
+            for name in type(self).model_fields
+            if name not in {"cost_known", "cost_currency"}
+        }
+        data["cost_known"] = self.cost_known and baseline.cost_known
+        data["cost_currency"] = self.cost_currency
+        return type(self)(**data)
+
 
 class StageTiming(SanitizedModel):
     """各阶段耗时（秒），用于定位性能瓶颈。"""
