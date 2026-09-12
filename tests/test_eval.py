@@ -294,3 +294,51 @@ class TestRepeatAndSpread:
             encoding="utf-8"
         )
         assert 'fallback_currency = services.settings.pricing.currency' in source
+
+
+class TestHallucinationMetricIsNotVacuous:
+    """``hallucination_rate`` 一度在整个评测集上**结构性恒为 0**。
+
+    36 道题里没有任何一题定义 ``forbidden_keywords``，
+    于是 ``forbidden_hit`` 恒为 False、这个指标无法取到非零值。
+    它却出现在每一张实验表里被当作正面结果——正是项目自己在
+    EXPERIMENTS.md 实验五里警告过的"指标饱和不是表现好，是测量没有区分度"。
+    """
+
+    def test_the_eval_set_actually_defines_forbidden_keywords(self) -> None:
+        """判据存在性检查：否则指标恒为 0 而看不出来。"""
+        cases = load_cases(Path(__file__).resolve().parents[1] / "benchmarks/data/rag_qa.jsonl")
+        guarded = [case for case in cases if case.forbidden_keywords]
+        assert guarded, "评测集没有禁止词 → hallucination_rate 结构性恒为 0"
+        # 禁止词应当落在库外题上：那些题"编造答案"才是真正的幻觉
+        assert all(not case.expected_answerable for case in guarded)
+        assert len(guarded) >= 8
+
+    def test_fabricated_answer_on_an_out_of_corpus_case_is_caught(self) -> None:
+        case = EvaluationCase(
+            identifier="n06",
+            question="How many parameters does GPT-4 have?",
+            expected_answerable=False,
+            forbidden_keywords=("1.8 trillion",),
+        )
+        fabricated = result(case=case, answer="GPT-4 has about 1.8 trillion parameters.", refused=False)
+        assert fabricated.forbidden_hit is True
+        assert fabricated.behavior_correct is False
+        assert EvaluationReport(results=[fabricated]).hallucination_rate == pytest.approx(1.0)
+
+    def test_a_refusal_mentioning_the_number_is_not_a_hallucination(self) -> None:
+        """拒答没有主张内容；把拒答算成幻觉会让"该拒的拒了"反受惩罚。"""
+        case = EvaluationCase(
+            identifier="n06",
+            question="How many parameters does GPT-4 have?",
+            expected_answerable=False,
+            forbidden_keywords=("1.8 trillion",),
+        )
+        refused = result(
+            case=case,
+            answer="语料未涉及 GPT-4 的参数量（坊间流传的 1.8 trillion 无出处）。",
+            refused=True,
+        )
+        assert refused.forbidden_hit is False
+        assert refused.behavior_correct is True
+        assert EvaluationReport(results=[refused]).hallucination_rate == pytest.approx(0.0)

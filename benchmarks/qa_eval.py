@@ -96,7 +96,15 @@ class CaseResult:
 
     @property
     def forbidden_hit(self) -> bool:
-        """是否出现了禁止词（无禁止词时恒为 False）。"""
+        """是否出现了禁止词（无禁止词时恒为 False）。
+
+        **只对非拒答的答案计。** 拒答没有主张任何内容——即便它在解释里
+        顺带提到那个数字（"本语料未涉及 GPT-4 参数量，只有 GPT-3 的 1750 亿"），
+        也不构成"给出了不该给的答案"。把拒答算成幻觉会让"该拒的拒了"
+        反而受到惩罚，方向正好反了。
+        """
+        if self.refused:
+            return False
         lowered = self.answer.lower()
         return any(word.lower() in lowered for word in self.case.forbidden_keywords)
 
