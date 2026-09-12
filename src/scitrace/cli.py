@@ -23,7 +23,13 @@ from pathlib import Path
 
 from scitrace import __version__
 from scitrace.api import ask, build_index, index_status, load_services, search
-from scitrace.config import Settings, SettingsError, load_settings, save_named, settings_path
+from scitrace.config import (
+    Settings,
+    SettingsError,
+    load_settings,
+    save_named,
+    settings_path,
+)
 from scitrace.domain.session import SessionStatus
 from scitrace.service import SessionStore
 
@@ -278,21 +284,50 @@ def _cmd_sessions(args: argparse.Namespace) -> int:
 
 
 def _cmd_config(args: argparse.Namespace) -> int:
-    settings = _load(args.settings)
+    """配置管理。
+
+    ## save / init 不能要求目标 profile **已经存在**
+
+    早先的实现对所有子命令都先 ``_load(args.settings)``，于是
+    ``stc config save --settings myprofile`` 在 myprofile 不存在时直接报
+    "配置文件不存在" —— **这个命令永远无法创建新 profile**，
+    而"创建一个新 profile"恰恰是它最主要的用途。
+
+    现在 save / init 走 :func:`_load_for_writing`：目标已存在则在其基础上改，
+    不存在则以默认配置为起点。这也让 ``init`` 与 ``save`` 的语义一致
+    （前者是后者的别名，用于"从零生成一份配置"）。
+    """
     name = args.settings or "default"
-    if args.config_command == "show":
-        payload = settings.to_payload()
-        _emit(payload, as_json=True, human="")
+
+    if args.config_command in {"show", "path"}:
+        settings = _load(args.settings)
+        if args.config_command == "show":
+            _emit(settings.to_payload(), as_json=True, human="")
+        else:
+            print(settings_path(name))
         return EXIT_OK
-    if args.config_command == "path":
-        print(settings_path(name))
-        return EXIT_OK
+
     if args.config_command in {"save", "init"}:
-        written = save_named(settings, name)
+        written = save_named(_load_for_writing(name), name)
         print(f"已写入 {written}")
         return EXIT_OK
+
     print(f"未知的 config 子命令：{args.config_command}", file=sys.stderr)
     return EXIT_USAGE
+
+
+def _load_for_writing(name: str) -> Settings:
+    """为写入 profile 而加载配置：目标不存在时以默认配置为起点。
+
+    与 :func:`_load` 的区别只在"目标不存在"这一种情形：读配置时那必须报错
+    （打错 profile 名却静默用默认值跑完实验是最难发现的错误），
+    写配置时那正是正常起点。
+    """
+    try:
+        return _load(name)
+    except SettingsError:
+        logger.debug("profile %s 尚不存在，以默认配置为写入起点", name)
+        return load_settings(name=None, dotenv_path=None)
 
 
 def main(argv: list[str] | None = None) -> int:

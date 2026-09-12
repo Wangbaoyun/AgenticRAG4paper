@@ -170,3 +170,24 @@ class TestFormatReport:
         assert rendered.startswith("# scitrace 评测报告")
         assert "behavior_correctness" in rendered
         assert "| # |" in rendered
+
+
+class TestCurrencyPropagation:
+    """币种必须一路传到报告顶层。
+
+    真实评测里出现过一次：成本值是对的（21.5 元），但报告写的是 `cost_currency: USD`
+    ——因为 `CaseResult` 的默认值是 USD，而成功路径忘了把它传进去。
+    读数的人会以为这是美元，差了一个数量级的判断都可能因此成立。
+    """
+
+    def test_report_uses_case_currency(self) -> None:
+        report = EvaluationReport(results=[result(currency="CNY")])
+        assert report.cost_currency == "CNY"
+        assert report.summary()["cost_currency"] == "CNY"
+
+    def test_defaults_to_usd_when_empty(self) -> None:
+        assert EvaluationReport().cost_currency == "USD"
+
+    def test_summary_is_serializable_with_currency(self) -> None:
+        payload = EvaluationReport(results=[result(currency="CNY")]).summary()
+        assert json.loads(json.dumps(payload))["cost_currency"] == "CNY"

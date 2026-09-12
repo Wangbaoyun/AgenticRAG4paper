@@ -256,6 +256,7 @@ async def run_evaluation(
                 dangling_citations=dangling,
                 duration_s=time.perf_counter() - started,
                 cost=cost,
+                currency=currency,
             )
         )
         logger.info("[%s] %s → %s", case.identifier, case.question[:40], status)
