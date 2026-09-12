@@ -205,7 +205,16 @@ class AgentRuntime:
                     Usage(
                         prompt_tokens=response.prompt_tokens,
                         completion_tokens=response.completion_tokens,
+                        cached_tokens=response.cached_tokens,
                         estimated_cost=response.cost,
+                        # 这几个字段必须原样带过来，**尤其是 cost_currency**：
+                        # 这是 agentic 会话的第一次 merge，而 Usage 的默认币种是
+                        # "USD"。漏掉它，整个累加器就被默认值污染，
+                        # 一次人民币计价的会话会全程报 USD（实测踩到过）。
+                        # cached_tokens 同理：漏掉会让缓存命中统计永远为 0，
+                        # 而命中价便宜两个数量级，报告出来的成本结构是错的。
+                        cost_currency=response.cost_currency,
+                        cost_known=response.cost_known,
                         llm_calls=1,
                     )
                 )

@@ -649,3 +649,58 @@ class TestBehaviorContracts:
         result = await AgentRuntime(services=services, question="Q").run()
         assert isinstance(result.status, SessionStatus)
         assert result.answer is not None
+
+
+class TestUsageFieldsAreCarriedThrough:
+    """每次把 ``LLMResponse`` 折成 ``Usage`` 时都必须带上计价相关字段。
+
+    这类字段漏传**不会报错**、不会让任何断言失败，只会静静地产生一个
+    看起来正常的错数字——币种错标、缓存命中恒为 0。
+    实测：agent 自身调用那一处漏了 ``cost_currency``，而它是 agentic 会话的
+    第一次 merge，于是整个累加器被 ``Usage`` 的默认值 ``"USD"`` 污染，
+    一次人民币计价的会话全程报 USD。
+    """
+
+    async def test_agent_call_currency_reaches_the_session(self, tmp_path: Path) -> None:
+        from scitrace.ports import LLMResponse, ToolCall
+
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+
+        async def complete(messages, **kwargs):  # noqa: ANN001, ANN202, ARG001
+            return LLMResponse(
+                content="",
+                tool_calls=(
+                    ToolCall(id="c1", name="gather_evidence", arguments={"question": "Q"}),
+                ),
+                prompt_tokens=100,
+                completion_tokens=20,
+                cached_tokens=64,
+                cost=0.5,
+                cost_currency="CNY",
+                cost_known=True,
+            )
+
+        factory.llm_agent.complete = complete  # type: ignore[method-assign]
+        result = await AgentRuntime(services=services, question="Q", mode="agentic").run()
+        assert result.usage.cost_currency == "CNY", "agent 调用的币种被丢掉了"
+        assert result.usage.cached_tokens >= 64, "agent 调用的缓存命中数被丢掉了"
+
+    def test_every_usage_from_a_response_carries_the_currency(self) -> None:
+        """结构性护栏：所有从 LLM 响应构造 Usage 的地方都要带 cost_currency。"""
+        import re
+
+        root = Path(__file__).resolve().parents[1] / "src" / "scitrace"
+        offenders: list[str] = []
+        for path in root.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for match in re.finditer(r"Usage\(\n(.*?)\n\s*\)", source, re.DOTALL):
+                body = match.group(1)
+                if "response.cost" not in body:
+                    continue  # 不是从响应折出来的（如只带 dangling_citations）
+                # 必须匹配**关键字参数**而非裸词：注释里提一句 cost_currency
+                # 就足以骗过 `"cost_currency" in body`——第一版护栏正是这样失效的。
+                if "cost_currency=" not in body:
+                    line = source[: match.start()].count("\n") + 1
+                    offenders.append(f"{path.relative_to(root)}:{line}")
+        assert not offenders, f"这些 Usage 构造漏了 cost_currency：{offenders}"
