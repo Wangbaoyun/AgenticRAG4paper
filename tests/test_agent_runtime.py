@@ -704,3 +704,128 @@ class TestUsageFieldsAreCarriedThrough:
                     line = source[: match.start()].count("\n") + 1
                     offenders.append(f"{path.relative_to(root)}:{line}")
         assert not offenders, f"这些 Usage 构造漏了 cost_currency：{offenders}"
+
+
+class TestHistoryCompaction:
+    """SPEC §4.2：历史超过 ``context_token_limit`` 时对旧观测做有损压缩。
+
+    这个功能**只在长会话里触发**，日常测试跑不到，因此必须直接构造超限历史来测。
+    它也是最容易写出"看起来对、上线就 400"的一类代码：压缩历史时若顺手删掉
+    中间的消息，assistant 的 ``tool_calls`` 就会失去配对的 tool 消息。
+    """
+
+    def _runtime(self, tmp_path: Path, *, limit: int = 500):  # noqa: ANN202
+        from scitrace.agent.runtime import AgentRuntime
+
+        class _Usage:
+            def __init__(self) -> None:
+                from scitrace.domain.session import Usage
+
+                self.usage = Usage()
+                self.settings = type("S", (), {"pricing": type("P", (), {"currency": "CNY"})})()
+
+        services = _Usage()
+        runtime = AgentRuntime.__new__(AgentRuntime)
+        runtime.settings = type(
+            "S",
+            (),
+            {"agent": type("A", (), {"context_token_limit": limit})(), "sessions_dir": tmp_path},
+        )()
+        runtime.services = services
+        from scitrace.agent.state import AgentState
+
+        runtime.state = AgentState(question="Q")
+        return runtime
+
+    def _history(self, *, rounds: int, observation_chars: int = 600):  # noqa: ANN202
+        from scitrace.ports import LLMMessage, ToolCall
+
+        messages = [
+            LLMMessage(role="system", content="你是研究助手。" + "规则" * 50),
+            LLMMessage(role="user", content="问题：Q"),
+        ]
+        for index in range(rounds):
+            call_id = f"c{index}"
+            messages.append(
+                LLMMessage(
+                    role="assistant",
+                    content=f"第 {index} 轮决策",
+                    tool_calls=(
+                        ToolCall(id=call_id, name="gather_evidence", arguments={"question": "Q"}),
+                    ),
+                )
+            )
+            messages.append(
+                LLMMessage(
+                    role="tool",
+                    tool_call_id=call_id,
+                    name="gather_evidence",
+                    content=f"已收集证据 {index}\n" + "细节" * (observation_chars // 2),
+                )
+            )
+        return messages
+
+    def test_no_compaction_below_the_limit(self, tmp_path: Path) -> None:
+        runtime = self._runtime(tmp_path, limit=10_000_000)
+        messages = self._history(rounds=3)
+        assert runtime._compact_history(messages) is messages, "未超限不该做任何拷贝"
+        assert "history_compacted" not in runtime.state.notes
+
+    def test_messages_are_never_dropped(self, tmp_path: Path) -> None:
+        """**最重要的一条**：压缩只改 content，消息序列长度与角色必须原样保留。
+
+        删掉中间的消息会让 assistant 的 ``tool_calls`` 失去配对的 tool 消息，
+        多数提供商会直接返回 400——而那是在长会话里才发生的线上故障。
+        """
+        runtime = self._runtime(tmp_path, limit=500)
+        messages = self._history(rounds=8)
+        compacted = runtime._compact_history(messages)
+        assert len(compacted) == len(messages)
+        assert [m.role for m in compacted] == [m.role for m in messages]
+        assert [m.tool_call_id for m in compacted] == [m.tool_call_id for m in messages]
+        assert [m.tool_calls for m in compacted] == [m.tool_calls for m in messages]
+        assert "history_compacted" in runtime.state.notes
+
+    def test_head_and_tail_are_left_intact(self, tmp_path: Path) -> None:
+        runtime = self._runtime(tmp_path, limit=500)
+        messages = self._history(rounds=8)
+        compacted = runtime._compact_history(messages)
+        assert compacted[0].content == messages[0].content, "任务描述不能被压掉"
+        assert compacted[1].content == messages[1].content
+        for index in range(len(messages) - 4, len(messages)):
+            assert compacted[index].content == messages[index].content, "正在处理的上下文不能被压掉"
+
+    def test_old_observations_become_tool_name_plus_summary_line(self, tmp_path: Path) -> None:
+        runtime = self._runtime(tmp_path, limit=500)
+        messages = self._history(rounds=8)
+        compacted = runtime._compact_history(messages)
+        middle = compacted[2 : len(compacted) - 4]
+        compressed = [m for m in middle if m.role == "tool" and "（已压缩）" in m.content]
+        assert compressed, "中间应该有被压缩的旧观测"
+        for message in compressed:
+            assert message.content.startswith("gather_evidence（已压缩）：")
+            assert "已收集证据" in message.content, "摘要行应保留观测首行的结论"
+            assert "细节" not in message.content, "正文细节应被压掉"
+            assert len(message.content) < 250
+
+    def test_over_limit_after_compaction_is_reported_not_hidden(self, tmp_path: Path) -> None:
+        """压缩完仍超限时必须如实标注，不能假装已经处理好了。"""
+        runtime = self._runtime(tmp_path, limit=100)
+        runtime._compact_history(self._history(rounds=8))
+        assert "history_over_limit_after_compaction" in runtime.state.notes
+
+    def test_observation_truncation_keeps_both_ends(self, tmp_path: Path) -> None:
+        """截断保留首尾：结论常在末尾，只砍尾巴会把结论丢掉。"""
+        from scitrace.agent.runtime import _OBSERVATION_CHAR_LIMIT
+
+        runtime = self._runtime(tmp_path)
+        text = "开头标记" + "中" * (_OBSERVATION_CHAR_LIMIT * 2) + "结尾标记"
+        truncated = runtime._truncate_observation(text)
+        assert truncated.startswith("开头标记")
+        assert truncated.endswith("结尾标记")
+        assert "省略" in truncated, "必须告知模型中间有内容被省略，静默截断会误导它"
+        assert len(truncated) < len(text)
+
+    def test_short_observation_is_untouched(self, tmp_path: Path) -> None:
+        runtime = self._runtime(tmp_path)
+        assert runtime._truncate_observation("已收集 3 条证据。") == "已收集 3 条证据。"

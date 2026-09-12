@@ -33,10 +33,36 @@ from scitrace.agent.state import AgentState, Tool, ToolOutcome, status_line
 from scitrace.agent.tools import build_default_tools
 from scitrace.domain import Answer, Session, SessionStatus
 from scitrace.domain.session import ActionRecord, StageTiming, Usage
+from scitrace.util.text import estimate_tokens
 from scitrace.ports import LLMMessage
 from scitrace.service import SessionStore
 
 logger = logging.getLogger(__name__)
+
+#: 单条工具观测回灌给模型时的字符上限。见 :meth:`AgentRuntime._truncate_observation`。
+_OBSERVATION_CHAR_LIMIT = 4000
+
+#: 压缩历史时，开头**不动**的消息条数（system + 用户问题）。
+_COMPACT_HEAD_MESSAGES = 2
+
+#: 压缩历史时，末尾**不动**的消息条数（约两轮 assistant + tool）。
+_COMPACT_KEEP_RECENT = 4
+
+#: 压缩旧观测时，"工具名 + 摘要行"里摘要行保留的字符数。
+_COMPACT_SUMMARY_CHARS = 200
+
+
+def _first_line(text: str, *, limit: int) -> str:
+    """取首个非空行并截到 ``limit``。
+
+    观测的首行通常就是结论（"已收集 8 条证据"、"已生成答案（3 处引用）"），
+    正文细节在后续行里——压缩时留首行是信息密度最高的选择。
+    """
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:limit]
+    return ""
 
 __all__ = ["AgentRunResult", "AgentRuntime"]
 
@@ -200,6 +226,7 @@ class AgentRuntime:
                 if self.budget.exhausted(self.session_usage):
                     termination = "budget_exceeded"
                     break
+                messages = self._compact_history(messages)
                 response = await self.services.llm("agent").complete(messages, tools=specs)
                 self.services.merge_usage(
                     Usage(
@@ -255,7 +282,7 @@ class AgentRuntime:
                             role="tool",
                             tool_call_id=call.id,
                             name=call.name,
-                            content=outcome.observation,
+                            content=self._truncate_observation(outcome.observation),
                         )
                     )
                     if call.name == "gather_evidence":
@@ -374,6 +401,79 @@ class AgentRuntime:
         except Exception as error:  # noqa: BLE001 - 持久化失败不该让问答失败
             logger.warning("会话持久化失败（不影响本次结果）：%s", error)
             return ""
+
+    # ------------------------------------------------------- 历史与观测长度 --
+
+    def _truncate_observation(self, text: str) -> str:
+        """把单条工具观测截到 ``_OBSERVATION_CHAR_LIMIT`` 以内再回灌。
+
+        截断**保留首尾**而不是只留开头：工具观测的结论往往在末尾
+        （例如"已收集 N 条证据，其中 M 条与问题相关"），只砍尾巴会把结论丢掉。
+        省略掉的字符数写进占位符里，让模型知道中间有内容被省略——
+        静默截断会让模型以为自己看到了完整观测。
+        """
+        if len(text) <= _OBSERVATION_CHAR_LIMIT:
+            return text
+        head = _OBSERVATION_CHAR_LIMIT // 2
+        tail = _OBSERVATION_CHAR_LIMIT - head
+        omitted = len(text) - _OBSERVATION_CHAR_LIMIT
+        return f"{text[:head]}\n…（此处省略 {omitted} 字符）…\n{text[-tail:]}"
+
+    def _compact_history(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """历史超过 ``context_token_limit`` 时，对**旧观测**做有损压缩。
+
+        实现 SPEC §4.2：只保留"工具名 + 摘要行"，保留首尾。
+
+        三条设计约束，每条都对应一类真实会踩的坑：
+
+        1. **只改 ``content``，绝不删除消息**。多数提供商要求 assistant 的
+           ``tool_calls`` 与其后的 tool 消息成对出现，删掉中间的消息会让请求 400。
+           压缩内容既省 token 又不动消息序列。
+        2. **首尾不动**。开头是 system + 用户问题（丢了就改变了任务本身），
+           末尾若干条是模型正在处理的上下文（压掉会让它看不见刚发生的事）。
+        3. **宁可少压也不误压**。限制只在超限时才触发；压缩过的条目标成
+           "（已压缩）"，避免模型把摘要行当成观测全文。
+
+        Args:
+            messages: 当前消息历史。
+
+        Returns:
+            压缩后的消息列表；未超限时原样返回（同一个对象，不做无谓拷贝）。
+        """
+        limit = self.settings.agent.context_token_limit
+        if self._history_tokens(messages) <= limit:
+            return messages
+
+        tail_start = max(_COMPACT_HEAD_MESSAGES, len(messages) - _COMPACT_KEEP_RECENT)
+        compacted: list[LLMMessage] = []
+        compressed = 0
+        for index, message in enumerate(messages):
+            is_old = _COMPACT_HEAD_MESSAGES <= index < tail_start
+            if is_old and message.role == "tool" and len(message.content) > _COMPACT_SUMMARY_CHARS:
+                summary = _first_line(message.content, limit=_COMPACT_SUMMARY_CHARS)
+                compacted.append(
+                    message.model_copy(
+                        update={"content": f"{message.name or '工具'}（已压缩）：{summary}"}
+                    )
+                )
+                compressed += 1
+            else:
+                compacted.append(message)
+
+        if compressed and "history_compacted" not in self.state.notes:
+            self.state.notes.append("history_compacted")
+        if self._history_tokens(compacted) > limit:
+            # 压缩后仍超限：如实标注，不要假装已经处理好了。
+            # 这里不继续加码压缩——把首尾也压掉会让模型失去任务描述或当前上下文，
+            # 那是比超限更糟的失效。
+            if "history_over_limit_after_compaction" not in self.state.notes:
+                self.state.notes.append("history_over_limit_after_compaction")
+        return compacted
+
+    @staticmethod
+    def _history_tokens(messages: list[LLMMessage]) -> int:
+        """估算整段历史的 token 数（仅用于阈值判断，见 :func:`estimate_tokens`）。"""
+        return sum(estimate_tokens(message.content) for message in messages)
 
     @property
     def session_usage(self) -> Usage:

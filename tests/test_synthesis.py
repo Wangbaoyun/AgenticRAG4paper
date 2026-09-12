@@ -207,7 +207,7 @@ class TestBindCitations:
         """
         item = evidence()
         quotation = "若证据不足，可搜索更多论文、收集先前证据引用的论文、或换短语重新收集证据"
-        head = "PaperQA2 的关键工具包括 Paper Search Tool、Gather Evidence Tool 与 Generate Answer Tool。"
+        head = "该 agent 的关键工具包括论文搜索、证据收集与答案生成三类，三者构成一个可迭代的检索闭环。"
         body = f"其中证据收集工具的设计动机是：{quotation}。" * 6
         answer = bind_citations(
             f"{head}{body}综上，这些工具共同构成 agentic 检索流程 (ev-"
@@ -217,6 +217,8 @@ class TestBindCitations:
         )
         assert len(answer.raw_text) > 120, "必须长于短答案阈值，否则测的是另一条分支"
         assert quotation in answer.raw_text, "被引用的原文必须真的在答案里"
+        # 引文必须落在"开头窗口"之外，否则测的是另一条分支（短答案/开头声明）
+        assert answer.raw_text.index(quotation) > 20, "引文位置太靠前，没测到长答案分支"
         assert answer.refused is False, "引用材料不是拒答"
         assert answer.citations, "引用必须被成功绑定"
         assert "ev-" not in answer.text, "裸键必须已被替换为可读引用"

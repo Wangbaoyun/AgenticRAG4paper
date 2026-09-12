@@ -12,10 +12,13 @@ from __future__ import annotations
 import json
 import re
 
+from scitrace.util.tokenize_zh import is_cjk_ideograph
+
 __all__ = [
     "extract_balanced_json_object",
     "find_arxiv_id",
     "find_doi",
+    "estimate_tokens",
     "first_page_text",
     "parse_json_object",
     "strip_reasoning_tags",
@@ -193,3 +196,33 @@ def _try_load_object(candidate: str) -> dict[str, object] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+#: CJK 字符在主流 BPE 词表里大多独占 1 个 token，而非 CJK 文本约 4 字符 1 token。
+#: 这两个系数是**估算**用的经验值，用于判断"历史是否该压缩"这类阈值决策，
+#: **不要**拿它当计费依据——计费一律用提供商返回的 ``usage``。
+_CJK_CHARS_PER_TOKEN = 1.0
+_OTHER_CHARS_PER_TOKEN = 4.0
+
+
+def estimate_tokens(text: str) -> int:
+    """粗略估算一段文本的 token 数。
+
+    只用于**阈值判断**（例如"消息历史是否超过 ``context_token_limit``"），
+    不用于计费或任何对外报数。真实用量一律以提供商返回的 ``usage`` 为准——
+    本项目的成本读数全部来自那里，估算器只决定"要不要压缩历史"。
+
+    不含第三方分词器依赖：引入一个只在本地近似某个远程词表的实现，
+    会让"估算"看起来比实际更权威，而它对阈值的判断并不比这个公式更可靠。
+
+    Args:
+        text: 任意文本。
+
+    Returns:
+        估算的 token 数（不小于 0）。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for char in text if is_cjk_ideograph(char))
+    other = len(text) - cjk
+    return int(cjk / _CJK_CHARS_PER_TOKEN + other / _OTHER_CHARS_PER_TOKEN)
