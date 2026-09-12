@@ -269,3 +269,47 @@ class TestPromptHygiene:
         """
         render = get_prompt_set("zh").render_context_entry
         assert render(evidence_key="ev-1a2b3c4d", citation="c", summary="s").startswith("[ev-")
+
+
+class TestScreeningSummaryLengthCap:
+    """筛选摘要必须有篇幅上限。
+
+    摘要是给下游合成用的**原料**，过长会稀释真正相关的证据。
+    实测背景：未加上限时单次筛选 completion 为 454 tokens；
+    加上限后摘要稳定在 200–240 字符。
+
+    **但要如实记录这条改动的实际收益远低于预期**：completion 里
+    71–86% 是模型的推理 token，它随**输入片段长度**增长，
+    不随"要求输出多长"变化。因此上限只省下可见摘要那一部分。
+    """
+
+    @pytest.mark.parametrize("language", ["zh", "en"])
+    def test_screening_prompt_states_a_length_cap(self, language: str) -> None:
+        prompt = get_prompt_set(language).render_screening(
+            question="q", citation="(c)", text="t"
+        )[0]
+        assert "上限" in prompt or "cap" in prompt.lower()
+        # 必须给出可执行的数字，否则模型无从遵守
+        assert any(ch.isdigit() for ch in prompt)
+
+    @pytest.mark.parametrize("language", ["zh", "en"])
+    def test_cap_does_not_drop_the_detail_priority(self, language: str) -> None:
+        """压缩与保真冲突时必须有明确优先级，否则模型会先丢数字。"""
+        prompt = get_prompt_set(language).render_screening(
+            question="q", citation="(c)", text="t"
+        )[0]
+        assert "数值" in prompt or "numbers" in prompt.lower()
+
+    def test_both_languages_agree_on_having_a_cap(self) -> None:
+        """两个语言集必须同步——只改一个会让中文问答悄悄退化。"""
+        missing = [
+            lang
+            for lang in ("zh", "en")
+            if not any(
+                marker in get_prompt_set(lang).render_screening(
+                    question="q", citation="(c)", text="t"
+                )[0]
+                for marker in ("上限", "cap")
+            )
+        ]
+        assert not missing, f"这些语言集缺少篇幅上限：{missing}"

@@ -6,14 +6,14 @@
 
 | 项目 | 值 |
 | --- | --- |
-| 生成时间 | 2026-09-12 15:08:56 +0800 |
+| 生成时间 | 2026-09-12 16:06:27 +0800 |
 | 目标项目（待审计） | `/home/wby/MyPaperQA` |
 | 参考实现（比对基准） | `/home/wby/PaperQA` |
 | 上游 HEAD commit | `0a03fb09619c566470d07ab443ca8a7376b11d00` |
 | 上游 HEAD 提交信息 | chore: 移除不再使用的上游教程与 CI 配置 |
 | 参考侧文件集来源 | git ls-files（索引中的跟踪文件） |
 | 上游 HEAD 跟踪文件数 | 172（另有 0 个路径在 HEAD 中不存在，已跳过） |
-| 目标侧纳入审计的文件数 | 162 |
+| 目标侧纳入审计的文件数 | 165 |
 | n-gram 长度（源码 / 文档） | 8 / 12 |
 | 整体 containment 阈值 | 2.00% |
 | 单文件 containment 阈值 | 5.00% |
@@ -26,18 +26,18 @@
 
 | 检查项 | 状态 | 关键指标 | 阈值 |
 | --- | --- | --- | --- |
-| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.4572%（Jaccard 0.2474%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
+| 1. Token n-gram 重叠（n=8） | ✅ 通过 | 整体 containment 0.4563%（Jaccard 0.2472%）；单文件最高 13.8298%；最长公共 token 连续片段 0 | 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核 |
 | 2. 逐行精确复制 | ✅ 通过 | 逐字相同行 385（实质性 0 / 通用惯用式 385）；最长对齐片段 2 行 | 实质性 ≤ 0 行 且 对齐片段 < 5 行 |
 | 3. 字符串字面量相似度（阈值 0.60） | ✅ 通过 | 违规相似串 0 条（≥0.60 相似串 41 条）；专有标识符违规 0 处（说明性提及 10 处） | 相似度 ≥ 0.60 且匹配字符 ≥ 32 的相似串 = 0 且 代码中的标识符违规 = 0 |
 | 4. 依赖审计 | ✅ 通过 | 禁用依赖 0 处；警告 0 处 | 禁用依赖 = 0 |
-| 5. 资产 / 文档审计（文档 n=12） | ✅ 通过 | 哈希相同资产 0 个；文档整体 containment 0.0400%（最高 0.6594%） | 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00% |
+| 5. 资产 / 文档审计（文档 n=12） | ✅ 通过 | 哈希相同资产 0 个；文档整体 containment 0.0377%（最高 0.6594%） | 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00% |
 
 ## 1. Token n-gram 重叠（n=8）
 
-**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.4572%（Jaccard 0.2474%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
+**状态：** ✅ 通过　　**关键指标：** 整体 containment 0.4563%（Jaccard 0.2472%）；单文件最高 13.8298%；最长公共 token 连续片段 0　　**阈值：** 整体 containment ≤ 2.00%；且**任一文件**不得存在 ≥ 25 token 的连续公共片段（该判据不受文件大小豁免）；单文件 containment > 5.00% 且无长连续片段者列为待复核
 
 - 上游参考 n-gram 池：**82,410** 个（来自 58 个 `.py` 文件）
-- 目标 n-gram 池：**96,685** 个（扫描 96 个 `.py` 文件）
+- 目标 n-gram 池：**96,860** 个（扫描 96 个 `.py` 文件）
 - 交集：**442** 个
 
 #### 重叠最高的前 20 个目标文件
@@ -98,7 +98,7 @@
 **状态：** ✅ 通过　　**关键指标：** 逐字相同行 385（实质性 0 / 通用惯用式 385）；最长对齐片段 2 行　　**阈值：** 实质性 ≤ 0 行 且 对齐片段 < 5 行
 
 - 上游可比对代码行索引：**12,237** 条唯一非空行（`.py`，已剔除 <12 字符与通用样板）
-- 目标侧扫描的非空行：**17,765** 行
+- 目标侧扫描的非空行：**17,809** 行
 - 命中（逐字相同）：**385** 行，其中 **实质性 0** 行、通用惯用式 385 行
 - 属于通用样板（import / `if __name__` 等）而完全忽略：**0** 行
 - 行号同步递增的对齐片段：**5** 段，最长 **2** 行
@@ -114,10 +114,10 @@
 | 3 | `通用惯用式` | `benchmarks/qa_eval.py`:41 | `packages/paper-qa-nemotron/src/paperqa_nemotron/api.py`:62 | `logger = logging.getLogger(__name__)` |
 | 4 | `通用惯用式` | `benchmarks/qa_eval.py`:61 | `src/paperqa/types.py`:331 | `question: str` |
 | 5 | `通用惯用式` | `benchmarks/qa_eval.py`:107 | `src/paperqa/agents/env.py`:297 | `return False` |
-| 6 | `通用惯用式` | `benchmarks/qa_eval.py`:350 | `src/paperqa/agents/main.py`:116 | `logger.info(` |
-| 7 | `通用惯用式` | `benchmarks/qa_eval.py`:402 | `src/paperqa/agents/__init__.py`:176 | `parser.add_argument(` |
-| 8 | `通用惯用式` | `benchmarks/qa_eval.py`:404 | `src/paperqa/agents/tools.py`:55 | `default=None,` |
-| 9 | `通用惯用式` | `benchmarks/qa_eval.py`:407 | `src/paperqa/agents/__init__.py`:176 | `parser.add_argument(` |
+| 6 | `通用惯用式` | `benchmarks/qa_eval.py`:364 | `src/paperqa/agents/main.py`:116 | `logger.info(` |
+| 7 | `通用惯用式` | `benchmarks/qa_eval.py`:416 | `src/paperqa/agents/__init__.py`:176 | `parser.add_argument(` |
+| 8 | `通用惯用式` | `benchmarks/qa_eval.py`:418 | `src/paperqa/agents/tools.py`:55 | `default=None,` |
+| 9 | `通用惯用式` | `benchmarks/qa_eval.py`:421 | `src/paperqa/agents/__init__.py`:176 | `parser.add_argument(` |
 | 10 | `通用惯用式` | `src/scitrace/adapters/indexes/numpy_vector.py`:51 | `packages/paper-qa-nemotron/src/paperqa_nemotron/api.py`:62 | `logger = logging.getLogger(__name__)` |
 | 11 | `通用惯用式` | `src/scitrace/adapters/indexes/numpy_vector.py`:166 | `src/paperqa/llms.py`:71 | `def __len__(self) -> int:` |
 | 12 | `通用惯用式` | `src/scitrace/adapters/indexes/numpy_vector.py`:169 | `src/paperqa/clients/__init__.py`:78 | `def __repr__(self) -> str:` |
@@ -222,7 +222,7 @@ _无警告。_
 
 ## 5. 资产 / 文档审计（文档 n=12）
 
-**状态：** ✅ 通过　　**关键指标：** 哈希相同资产 0 个；文档整体 containment 0.0400%（最高 0.6594%）　　**阈值：** 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00%
+**状态：** ✅ 通过　　**关键指标：** 哈希相同资产 0 个；文档整体 containment 0.0377%（最高 0.6594%）　　**阈值：** 哈希相同 = 0 且 文档整体 ≤ 2.00% 且 单文档 ≤ 5.00%
 
 #### 5.1 资产内容哈希（SHA-256）
 
@@ -234,8 +234,8 @@ _未发现与上游 git 跟踪文件内容完全相同的资产。_
 #### 5.2 文档 token n-gram（n=12）
 
 - 上游文本文件参与比对：**162** 个，n-gram 池 **1,558,270** 个
-- 目标 `.md`/`.rst` 文件：**19** 个，n-gram 池 **57,566** 个
-- 整体 containment **0.0400%**，Jaccard **0.0014%**
+- 目标 `.md`/`.rst` 文件：**22** 个，n-gram 池 **63,701** 个
+- 整体 containment **0.0377%**，Jaccard **0.0015%**
 
 | # | 目标文档 | containment | 共有 n-gram | 文档 n-gram 总数 |
 | --- | --- | --- | --- | --- |
@@ -250,14 +250,15 @@ _未发现与上游 git 跟踪文件内容完全相同的资产。_
 | 9 | `docs/eval_agentic_9q_k3.md` | 0.4367% | 4 | 916 |
 | 10 | `docs/eval_agentic_9q_crossencoder.md` | 0.4338% | 4 | 922 |
 | 11 | `docs/eval_agentic_9q.md` | 0.4320% | 4 | 926 |
-| 12 | `benchmarks/data/eval36_report.md` | 0.4283% | 4 | 934 |
-| 13 | `docs/eval_36q_deterministic.md` | 0.4278% | 4 | 935 |
-| 14 | `tools/README.md` | 0.2564% | 2 | 780 |
-| 15 | `docs/SPEC.md` | 0.0957% | 9 | 9,403 |
-| 16 | `docs/重构方案.md` | 0.0843% | 5 | 5,934 |
-| 17 | `docs/PROVENANCE.md` | 0.0669% | 5 | 7,478 |
-| 18 | `docs/COMPARISON.md` | 0.0648% | 4 | 6,170 |
-| 19 | `docs/EXPERIMENTS.md` | 0.0359% | 7 | 19,481 |
+| 12 | `docs/eval_agentic_9q_nocap.md` | 0.4306% | 4 | 929 |
+| 13 | `benchmarks/data/eval36_report.md` | 0.4283% | 4 | 934 |
+| 14 | `docs/eval_36q_deterministic.md` | 0.4278% | 4 | 935 |
+| 15 | `docs/eval_agentic_9q_capA.md` | 0.4278% | 4 | 935 |
+| 16 | `tools/README.md` | 0.2564% | 2 | 780 |
+| 17 | `docs/AGENTIC_PLAN.md` | 0.1239% | 5 | 4,034 |
+| 18 | `docs/SPEC.md` | 0.0957% | 9 | 9,403 |
+| 19 | `docs/重构方案.md` | 0.0843% | 5 | 5,934 |
+| 20 | `docs/PROVENANCE.md` | 0.0669% | 5 | 7,478 |
 
 ---
 

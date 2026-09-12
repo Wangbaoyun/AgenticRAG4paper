@@ -141,12 +141,15 @@ _ZH = PromptSet(
 
 输出必须是一个 JSON 对象，且只包含两个字段：
 
-- "summary"：针对该问题，从片段中提炼的**详尽**信息摘要
+- "summary"：针对该问题，从片段中提炼的信息摘要（**有篇幅上限**，见下）
 - "relevance_score"：1 到 10 的整数，表示该片段对回答该问题的价值
 
 摘要的写法：
+- **篇幅上限：150 字以内。** 这条是硬约束——摘要是给下游合成用的原料，
+  过长会把真正相关的证据稀释掉；
 - 围绕问题筛选信息，不要面面俱到地复述整段；
 - 保留具体细节——数值、单位、公式、方法名、数据集名、结论的方向与幅度；
+- 篇幅与细节冲突时，**优先保住数值、单位与结论方向**，背景铺垫可以舍弃；
 - 直接引用原文关键短语时用引号标出，便于后续核对；
 - 不要回答这个问题本身：你提供原料，不负责下结论。
 
@@ -257,13 +260,17 @@ excerpt can provide for a given question.
 
 Your output must be a single JSON object with exactly two fields:
 
-- "summary": a **detailed** digest of the information in the excerpt that bears on the question
+- "summary": a digest of the information in the excerpt that bears on the question (**length-capped**, see below)
 - "relevance_score": an integer from 1 to 10 indicating how useful the excerpt is for answering it
 
 How to write the summary:
+- **Hard length cap: about 100 words.** The summary is raw material for a downstream
+  synthesis step, and an overlong one dilutes the genuinely relevant evidence.
 - Select information relative to the question; do not paraphrase the whole excerpt.
 - Preserve specifics: numbers, units, equations, method names, dataset names, and the
   direction and magnitude of any reported result.
+- When length and detail conflict, **keep the numbers, units, and the direction of the
+  result**; drop background framing instead.
 - When quoting a key phrase verbatim, put it in quotation marks so it can be checked later.
 - Do not answer the question yourself. You supply raw material; you do not draw conclusions.
 

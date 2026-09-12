@@ -221,6 +221,19 @@ class EvaluationReport:
         return sum(item.cost for item in self.results) / self.total
 
     @property
+    def tokens_per_question(self) -> float:
+        """每题 token 数。
+
+        **跨配置对比一律看这个，不看金额。** 金额会被计价表、币种、缓存命中价、
+        计价表缺项（litellm 不收录自建模型名）任意一层弄错——本项目已经因此
+        先后出过"人民币标成美元""成本恒为 0 导致闸门失效""累计值当每题值"
+        三类错误。token 直接来自提供商返回的 usage，没有中间解释层。
+        """
+        if not self.results:
+            return 0.0
+        return sum(item.tokens for item in self.results) / self.total
+
+    @property
     def cost_currency(self) -> str:
         """本次评测的计价币种（取首题结果；空报告时为 USD）。"""
         return self.results[0].currency if self.results else "USD"
@@ -239,6 +252,7 @@ class EvaluationReport:
             "answer_coverage": round(self.answer_coverage, 4),
             "citation_resolution_rate": round(self.citation_resolution_rate, 4),
             "hallucination_rate": round(self.hallucination_rate, 4),
+            "tokens_per_question": round(self.tokens_per_question, 1),
             "cost_per_question": round(self.cost_per_question, 6),
             "cost_currency": self.cost_currency,
             "mean_latency_s": round(self.mean_latency_s, 3),
