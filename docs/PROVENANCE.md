@@ -308,3 +308,35 @@ Python 的规范写法是开放集合，总能找到新的"显然通用但未被
 > `scitrace` 在 PaperQA2 公开的方法基础上（arXiv:2409.13740）**独立重实现**，
 > 代码与文本均为自有；差异化的自有贡献见 `docs/SPEC.md` §9。
 > 本项目与 FutureHouse 无从属关系。
+
+### E3 — Agentic 机制问答触发的源码阅读（2026-09，第 4 轮之后）
+
+用户直接询问"PaperQA 是怎么做 Agentic 模式的、本项目能否参考"。为给出准确回答，
+读取了上游 **agentic 相关**源码（范围大于 E2，E2 只读了工具名与状态枚举）：
+
+| 操作 | 接触内容 | 风险 |
+| --- | --- | --- |
+| 读 `agents/tools.py` 的 `GatherEvidence.gather_evidence` | 取证工具的委托结构与返回串 | 中 |
+| 读 `agents/models.py` | `AgentStatus` 枚举、`AnswerResponse` 字段 | 低 |
+| 读 `docs.py` 的 `aget_evidence` | 检索→逐片段摘要→**事后去重**的流程 | 中 |
+| 读 `settings.py` 的 `AnswerSettings` / `AgentSettings` 字段默认值 | `evidence_k=10`、`evidence_summary_length="about 100 words"`、`evidence_relevance_score_cutoff=1`、`agent_evidence_n=1`、`max_timesteps=None`、`search_count=8`、`timeout=500` | 低（配置事实） |
+| 读 `prompts.py` 138–190 | `env_system_prompt`（一句）、`env_reset_prompt`（终止引导） | 中 |
+| grep `types.py` / `env.py` | 仅确认符号位置，未读实现 | 低 |
+
+**风险判定**：`scitrace` 的实现、SPEC 与全部测试在本轮之前已完成并提交（20 个 commit），
+本文件**不进入任何实现**。但必须说明两点：
+
+1. 这次阅读**正落在"我们已知存在问题"的区域**（agentic 成本与过度拒答），
+   因此相比 E2 有更强的"读后照搬"动机，风险等级高于 E2。
+2. 若后续依据本文件去修改 agentic 实现，则 `scitrace` 在**该区域**的定位将从
+   "洁净室重写"变为"读后重实现"，原创性主张需要相应收窄——
+   **这个决定必须由用户做出，不由实现者自行默认**。
+
+**缓解与验证**：阅读后立即复跑 `tools/similarity_audit.py`，
+决定性指标「最长公共 token 连续片段」见 `docs/AUDIT.md`。
+
+**可以独立成立的巧合**：本文件中最有行动价值的两条（摘要长度上限、相关性阈值过严），
+**都能从 `scitrace` 自己的测量推出**，不依赖本次阅读——
+摘要开销是实测的 454 tokens/片段 × 约 66 次调用；
+阈值问题来自 a24 上 2/3 次过度拒答的实测。上游取值只是**佐证**，
+因此采纳这两条时，来源可以诚实地写成"由本项目测量得出"。
