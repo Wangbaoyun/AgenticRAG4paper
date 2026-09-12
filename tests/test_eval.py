@@ -191,3 +191,106 @@ class TestCurrencyPropagation:
     def test_summary_is_serializable_with_currency(self) -> None:
         payload = EvaluationReport(results=[result(currency="CNY")]).summary()
         assert json.loads(json.dumps(payload))["cost_currency"] == "CNY"
+
+
+class TestRepeatAndSpread:
+    """运行间方差必须被度量出来，否则同一配置的两次运行会被当成两个配置的差异。
+
+    实测背景：agentic 模式同一道题、同一索引，LLM 调用次数在 30–87 之间浮动
+    （见 ``docs/EXPERIMENTS.md`` 实验六 6.2）。只跑一次的对照拿到的是随机落点。
+    """
+
+    def _cases(self) -> list[EvaluationCase]:
+        return [
+            EvaluationCase(identifier="a01", question="q1", expected_answerable=True),
+            EvaluationCase(identifier="a02", question="q2", expected_answerable=True),
+        ]
+
+    async def test_repeat_runs_each_case_the_requested_number_of_times(self) -> None:
+        from benchmarks.qa_eval import run_evaluation
+
+        calls: list[str] = []
+
+        class _Services:
+            class settings:  # noqa: N801
+                class pricing:  # noqa: N801
+                    currency = "CNY"
+
+        async def fake_ask(question, services, *, mode="deterministic"):  # noqa: ANN001, ARG001
+            calls.append(question)
+            return AgentRunResult(
+                question=question,
+                answer=Answer(text="答案", raw_text="答案", citations=[]),
+                status=SessionStatus.SUCCESS,
+                usage=Usage(prompt_tokens=10, completion_tokens=5, llm_calls=2),
+            )
+
+        import scitrace.api as api
+
+        original_api = api.ask
+        api.ask = fake_ask  # type: ignore[assignment]
+        try:
+            # run_evaluation 在调用时 `from scitrace.api import ask`，
+            # 所以替换模块属性即可生效。
+            report = await run_evaluation(self._cases(), _Services(), mode="agentic", repeat=3)
+        finally:
+            api.ask = original_api  # type: ignore[assignment]
+
+        assert calls == ["q1", "q2"] * 3, "应按轮次重复整批，而不是逐题连跑"
+        assert report.repeats == 3
+        assert [item.run_index for item in report.results] == [0, 0, 1, 1, 2, 2]
+
+    def test_spread_reports_min_median_max_per_case(self) -> None:
+        report = EvaluationReport(
+            results=[
+                result(case=EvaluationCase(identifier="a01", question="q"), llm_calls=30),
+                result(case=EvaluationCase(identifier="a01", question="q"), llm_calls=87),
+                result(case=EvaluationCase(identifier="a01", question="q"), llm_calls=50),
+                result(case=EvaluationCase(identifier="a02", question="q"), llm_calls=12),
+                result(case=EvaluationCase(identifier="a02", question="q"), llm_calls=14),
+            ]
+        )
+        rows = dict((row[0], row[1:]) for row in report.per_case_spread())
+        assert rows["a01"] == (30, 50, 87), "中位数不是平均值，别把极值拉进来"
+        assert rows["a02"] == (12, 14, 14)
+
+    def test_cost_spread_ratio_uses_per_case_median(self) -> None:
+        """逐题取最贵/最便宜，再取中位数——避免被单题异常值主导。"""
+        report = EvaluationReport(
+            results=[
+                result(case=EvaluationCase(identifier="a01", question="q"), cost=0.1),
+                result(case=EvaluationCase(identifier="a01", question="q"), cost=0.3),
+                result(case=EvaluationCase(identifier="a02", question="q"), cost=0.2),
+                result(case=EvaluationCase(identifier="a02", question="q"), cost=0.4),
+                result(case=EvaluationCase(identifier="a03", question="q"), cost=1.0),
+                result(case=EvaluationCase(identifier="a03", question="q"), cost=50.0),
+            ]
+        )
+        # 逐题极差为 3.0 / 2.0 / 50.0，中位数是 3.0
+        assert report.cost_spread_ratio == pytest.approx(3.0)
+
+    def test_single_run_reports_no_spread(self) -> None:
+        report = EvaluationReport(
+            results=[result(case=EvaluationCase(identifier="a01", question="q"))]
+        )
+        assert report.repeats == 1
+        assert report.cost_spread_ratio == pytest.approx(1.0)
+
+    def test_markdown_warns_that_spread_precedes_the_summary(self) -> None:
+        report = EvaluationReport(
+            results=[
+                result(case=EvaluationCase(identifier="a01", question="q"), llm_calls=30),
+                result(case=EvaluationCase(identifier="a01", question="q"), llm_calls=87),
+            ]
+        )
+        rendered = format_report(report)
+        assert "运行间稳定性" in rendered
+        assert "| a01 | 30 | 87 | 87 |" in rendered
+        assert "先看这张表再看汇总" in rendered
+
+    def test_error_fallback_uses_the_configured_currency(self) -> None:
+        """失败题的币种不能写死 USD，否则人民币计价下的异常读数会被伪装成正常。"""
+        source = (Path(__file__).resolve().parents[1] / "benchmarks" / "qa_eval.py").read_text(
+            encoding="utf-8"
+        )
+        assert 'fallback_currency = services.settings.pricing.currency' in source

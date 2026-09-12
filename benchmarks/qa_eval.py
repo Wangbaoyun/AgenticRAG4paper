@@ -80,6 +80,11 @@ class CaseResult:
     duration_s: float
     cost: float
     currency: str = "USD"
+    #: 该题是第几次重复（从 0 开始）。不重复时恒为 0。
+    run_index: int = 0
+    #: 该题的 LLM 调用次数与 token 总量——**方差的主要来源**。
+    llm_calls: int = 0
+    tokens: int = 0
 
     @property
     def keyword_hit(self) -> bool:
@@ -152,6 +157,56 @@ class EvaluationReport:
         return sum(item.forbidden_hit for item in self.results) / self.total
 
     @property
+    def repeats(self) -> int:
+        """每题重复了几次（未重复时为 1）。"""
+        if not self.results:
+            return 1
+        counts: dict[str, int] = {}
+        for item in self.results:
+            counts[item.case.identifier] = counts.get(item.case.identifier, 0) + 1
+        return max(counts.values())
+
+    def per_case_spread(self) -> list[tuple[str, int, int, int]]:
+        """每题的 LLM 调用次数分布：``(题号, 最小, 中位, 最大)``。
+
+        **这是本评测最重要的一张表。**同一道题、同一份索引、同一套配置，
+        agentic 模式的 LLM 调用次数实测可以在 30 到 87 之间浮动
+        （见 ``docs/EXPERIMENTS.md`` 实验六 6.2）。只跑一次的对照
+        得到的是"这一次的随机落点"，不是配置之间的差异——
+        把它当作结论会得出**符号都可能反的**判断。
+        """
+        grouped: dict[str, list[int]] = {}
+        for item in self.results:
+            grouped.setdefault(item.case.identifier, []).append(item.llm_calls)
+        rows = []
+        for identifier, values in grouped.items():
+            ordered = sorted(values)
+            rows.append(
+                (identifier, ordered[0], ordered[len(ordered) // 2], ordered[-1])
+            )
+        return rows
+
+    @property
+    def cost_spread_ratio(self) -> float:
+        """最贵一次 / 最便宜一次的每题成本之比，用于度量运行间不稳定程度。
+
+        逐题取"该题各次成本的最大值 / 最小值"，再取所有题的中位数，
+        避免被单题异常值主导。1.0 表示完全稳定。
+        """
+        grouped: dict[str, list[float]] = {}
+        for item in self.results:
+            grouped.setdefault(item.case.identifier, []).append(item.cost)
+        ratios = []
+        for values in grouped.values():
+            positive = [value for value in values if value > 0]
+            if len(positive) >= 2:
+                ratios.append(max(positive) / min(positive))
+        if not ratios:
+            return 1.0
+        ratios.sort()
+        return ratios[len(ratios) // 2]
+
+    @property
     def cost_per_question(self) -> float:
         if not self.results:
             return 0.0
@@ -214,52 +269,79 @@ def load_cases(path: Path) -> list[EvaluationCase]:
 
 
 async def run_evaluation(
-    cases: Sequence[EvaluationCase], services, *, mode: str = "deterministic"  # noqa: ANN001
+    cases: Sequence[EvaluationCase],
+    services,  # noqa: ANN001
+    *,
+    mode: str = "deterministic",
+    repeat: int = 1,
 ) -> EvaluationReport:
     """把评测集跑一遍。
 
     刻意**顺序执行**而非并发：并发会让成本与延迟的统计失去意义
     （它们本是用于横向对比不同配置的指标），也让失败题目的复现变难。
+
+    Args:
+        cases: 评测题。
+        services: 已装配的服务。
+        mode: ``agentic`` 或 ``deterministic``。
+        repeat: 每题重复次数。agentic 模式**必须**大于 1 才有对照价值——
+            同一道题的 LLM 调用次数实测可在 30–87 之间浮动，
+            单次运行只是随机落点，不是配置差异。
+
+    Returns:
+        汇总报告；``repeat > 1`` 时每题会有 ``repeat`` 条结果，用 ``run_index`` 区分。
     """
     from scitrace.api import ask  # noqa: PLC0415 - 避免评测骨架被生产路径导入
 
+    fallback_currency = services.settings.pricing.currency
     report = EvaluationReport()
-    for case in cases:
-        started = time.perf_counter()
-        try:
-            result = await ask(case.question, services, mode=mode)
-            status = str(result.status)
-            answer = result.answer.text
-            refused = result.answer.refused or is_refusal(answer)
-            citations = len(result.answer.citations)
-            dangling = result.usage.dangling_citations
-            cost = result.usage.estimated_cost
-            currency = result.usage.cost_currency
-        except Exception as error:  # noqa: BLE001 - 单题失败不应中断整个评测
-            logger.exception("评测题 %s 执行失败", case.identifier)
-            status, answer, refused, citations, dangling, cost, currency = (
-                "ERROR",
-                f"执行失败：{error}",
-                True,
-                0,
-                0,
-                0.0,
-                "USD",
+    for run_index in range(max(1, repeat)):
+        for case in cases:
+            started = time.perf_counter()
+            try:
+                result = await ask(case.question, services, mode=mode)
+                status = str(result.status)
+                answer = result.answer.text
+                refused = result.answer.refused or is_refusal(answer)
+                citations = len(result.answer.citations)
+                dangling = result.usage.dangling_citations
+                cost = result.usage.estimated_cost
+                currency = result.usage.cost_currency
+                llm_calls = result.usage.llm_calls
+                tokens = result.usage.total_tokens
+            except Exception as error:  # noqa: BLE001 - 单题失败不应中断整个评测
+                logger.exception("评测题 %s 执行失败", case.identifier)
+                status, answer, refused, citations, dangling, cost, currency = (
+                    "ERROR",
+                    f"执行失败：{error}",
+                    True,
+                    0,
+                    0,
+                    0.0,
+                    # 用配置里的币种，不要写死 USD：写死会让"人民币计价下
+                    # 成本恒为 0"这类问题在报告里伪装成正常读数。
+                    fallback_currency,
+                )
+                llm_calls = tokens = 0
+            report.results.append(
+                CaseResult(
+                    case=case,
+                    status=status,
+                    refused=refused,
+                    answer=answer,
+                    citation_count=citations,
+                    dangling_citations=dangling,
+                    duration_s=time.perf_counter() - started,
+                    cost=cost,
+                    currency=currency,
+                    run_index=run_index,
+                    llm_calls=llm_calls,
+                    tokens=tokens,
+                )
             )
-        report.results.append(
-            CaseResult(
-                case=case,
-                status=status,
-                refused=refused,
-                answer=answer,
-                citation_count=citations,
-                dangling_citations=dangling,
-                duration_s=time.perf_counter() - started,
-                cost=cost,
-                currency=currency,
+            logger.info(
+                "[%s#%d] %s → %s", case.identifier, run_index, case.question[:40], status
             )
-        )
-        logger.info("[%s] %s → %s", case.identifier, case.question[:40], status)
     return report
 
 
@@ -270,10 +352,33 @@ def format_report(report: EvaluationReport) -> str:
         lines.append(f"- `{key}`: {value}")
     lines.extend(["", "## 逐题结果", "", "| # | 问题 | 状态 | 拒答 | 引用 | 关键词 | 耗时 |", "| --- | --- | --- | --- | --- | --- | --- |"])
     for index, item in enumerate(report.results, start=1):
+        tag = f"{item.case.identifier}#{item.run_index}" if report.repeats > 1 else str(index)
         lines.append(
-            f"| {index} | {item.case.question[:40]} | {item.status} | "
+            f"| {tag} | {item.case.question[:40]} | {item.status} | "
             f"{'是' if item.refused else '否'} | {item.citation_count} | "
             f"{'命中' if item.keyword_hit else '未命中'} | {item.duration_s:.1f}s |"
+        )
+    if report.repeats > 1:
+        lines.extend(
+            [
+                "",
+                "## 运行间稳定性（**先看这张表再看汇总**）",
+                "",
+                f"- 每题重复次数：`{report.repeats}`",
+                f"- 逐题成本极差中位数（最贵/最便宜）：`{report.cost_spread_ratio:.2f}×`",
+                "",
+                "| 题号 | LLM 调用 最少 | 中位 | 最多 |",
+                "| --- | --- | --- | --- |",
+            ]
+        )
+        for identifier, low, mid, high in report.per_case_spread():
+            lines.append(f"| {identifier} | {low} | {mid} | {high} |")
+        lines.extend(
+            [
+                "",
+                "> 极差远大于 1 时，题目之间的对比只在**同一批重复**内成立；"
+                "拿不同配置的单次运行互比会得到符号都可能相反的结论。",
+            ]
         )
     return "\n".join(lines) + "\n"
 
@@ -286,16 +391,41 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--cases", type=Path, required=True, help="评测集 JSONL")
     parser.add_argument("--settings", default=None)
     parser.add_argument("--mode", choices=["agentic", "deterministic"], default="deterministic")
+    parser.add_argument(
+        "--ids",
+        default=None,
+        help="只跑这些题号，逗号分隔（如 a01,a05,s02）。默认跑全部。",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "每题重复次数。agentic 模式务必大于 1：同题 LLM 调用次数实测可浮动 30–87，"
+            "单次运行只是随机落点。"
+        ),
+    )
     parser.add_argument("--output", type=Path, default=None, help="Markdown 报告输出路径")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     from scitrace.api import load_services
     from scitrace.config import load_settings
 
+    cases = load_cases(args.cases)
+    if args.ids:
+        wanted = [item.strip() for item in args.ids.split(",") if item.strip()]
+        by_id = {case.identifier: case for case in cases}
+        missing = [item for item in wanted if item not in by_id]
+        if missing:
+            parser.error(f"评测集里没有这些题号：{', '.join(missing)}")
+        cases = [by_id[item] for item in wanted]
+
     services = load_services(load_settings(name=args.settings))
     try:
         report = anyio.run(
-            lambda: run_evaluation(load_cases(args.cases), services, mode=args.mode)
+            lambda: run_evaluation(
+                cases, services, mode=args.mode, repeat=args.repeat
+            )
         )
     finally:
         anyio.run(services.aclose)
