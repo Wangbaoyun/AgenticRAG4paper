@@ -1,0 +1,8 @@
+{"id":"q1","question":"What two memory types does the original RAG model combine?","expected_answerable":true,"expected_keywords":["parametric","non-parametric"],"forbidden_keywords":["I think","probably"]}
+{"id":"q2","question":"What is self-reflection used for in Self-RAG?","expected_answerable":true,"expected_keywords":["token"],"forbidden_keywords":[]}
+{"id":"q3","question":"How does Corrective RAG handle retrieved documents that turn out to be irrelevant?","expected_answerable":true,"expected_keywords":["correct"],"forbidden_keywords":[]}
+{"id":"q4","question":"Why does GraphRAG build a knowledge graph instead of using vector search alone?","expected_answerable":true,"expected_keywords":["graph"],"forbidden_keywords":[]}
+{"id":"q5","question":"What does the ReAct approach interleave?","expected_answerable":true,"expected_keywords":["reason"],"forbidden_keywords":[]}
+{"id":"q6","question":"What is the superconducting transition temperature of hydrogen sulfide at 150 GPa?","expected_answerable":false,"expected_keywords":[],"forbidden_keywords":[]}
+{"id":"q7","question":"Who won the 2018 FIFA World Cup?","expected_answerable":false,"expected_keywords":[],"forbidden_keywords":[]}
+{"id":"q8","question":"What is the melting point of gallium at standard pressure?","expected_answerable":false,"expected_keywords":[],"forbidden_keywords":[]}

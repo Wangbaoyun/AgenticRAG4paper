@@ -52,6 +52,12 @@ class Budget:
         """
         if self.max_tokens is not None and usage.total_tokens > self.max_tokens + _EPSILON:
             return "token 预算超限"
+        if not usage.cost_known:
+            # 成本不可信时**不用它做判断**：拿一个恒为 0 的数字去比上限，
+            # 结果永远是不超限——那是一个假装在工作的闸门。
+            # 调用方（AgentRuntime）会就此告警一次，把"成本治理在当前配置下失效"
+            # 这件事明确告诉用户，而不是让它悄悄过去。
+            return None
         if (
             self.max_cost_usd is not None
             and not math.isclose(usage.estimated_cost_usd, self.max_cost_usd, abs_tol=_EPSILON)
@@ -59,6 +65,11 @@ class Budget:
         ):
             return "成本预算超限"
         return None
+
+    @property
+    def cost_gate_active(self) -> bool:
+        """成本上限是否被配置了。"""
+        return self.max_cost_usd is not None
 
     def exhausted(self, usage: Usage) -> bool:
         """是否已经超限。"""

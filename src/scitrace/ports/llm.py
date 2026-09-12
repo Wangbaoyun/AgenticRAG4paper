@@ -71,6 +71,13 @@ class LLMResponse(BaseModel):
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0.0)
+    cost_known: bool = Field(
+        default=True,
+        description=(
+            "成本是否可信。模型不在价格表中时为 False，此时 ``cost_usd`` 只是下界。"
+            "**不允许静默记 0**：那会让上层的成本闸门看起来在工作而从不触发。"
+        ),
+    )
     finish_reason: str = ""
 
 

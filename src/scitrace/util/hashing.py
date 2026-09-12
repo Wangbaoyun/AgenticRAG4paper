@@ -31,6 +31,14 @@ _SEP = "\x1f"
 _WHITESPACE_RE = re.compile(r"[^\S\n]+")  # 非换行的空白串（含 NBSP 归一化后的普通空格）
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
+#: 孤立代理项与其它不可编码的码位。
+#:
+#: **来自真实语料**：PDF 的字体编码表残缺时，pypdf 会把某些字形映射成孤立代理项
+#: （U+D800–U+DFFF），例如数学花体字母 𝓛 被拆成半个代理对。它们不是合法字符，
+#: 用 UTF-8 编码会抛 ``UnicodeEncodeError``——而抛出点在下游（全文索引的写入），
+#: 距离产生它的解析器很远，排查成本很高。
+_LONE_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+
 
 def sha256_hex(data: str | bytes, *, length: int = 16) -> str:
     """返回 ``data`` 的 SHA-256 十六进制摘要，截断到 ``length`` 个字符。
@@ -116,6 +124,9 @@ def normalize_text(text: str) -> str:
     """
     if not text:
         return ""
+    # 必须先于 NFKC：多数实现会在归一化时对孤立代理项抛错，或被它原样带过
+    if _LONE_SURROGATE_RE.search(text):
+        text = _LONE_SURROGATE_RE.sub("\ufffd", text)
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\u200b", "").replace("\ufeff", "")
     text = text.replace("\r\n", "\n").replace("\r", "\n")

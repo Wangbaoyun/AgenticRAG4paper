@@ -28,7 +28,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from scitrace import SCHEMA_VERSION
 from scitrace.config import ChunkingSettings
 from scitrace.domain import Fragment, Source, SourcePatch, make_source_key
+from scitrace.domain.session import Usage
 from scitrace.pipeline.chunking import chunk_document
+from scitrace.pipeline.title_inference import LLMTitleInferrer
 from scitrace.ports import (
     DocumentParser,
     EmbeddingClient,
@@ -146,6 +148,9 @@ class IngestReport:
     sources: dict[str, Source] = field(default_factory=dict)
     fragment_count: int = 0
     duplicate_sources: dict[str, list[str]] = field(default_factory=dict)
+    #: 摄入期间产生的 LLM 用量。目前只有标题推断会用到——
+    #: 把它记下来，才能回答"开着它索引 500 篇论文要多少钱"这个决定性问题。
+    usage: Usage = field(default_factory=Usage)
 
     @property
     def processed(self) -> int:
@@ -212,6 +217,7 @@ class IngestPipeline:
         fulltext_index: FullTextIndex | None = None,
         embedder: EmbeddingClient | None = None,
         resolver: MetadataResolver | None = None,
+        title_inferrer: LLMTitleInferrer | None = None,
         max_file_mb: float = 200.0,
         parse_concurrency: int = DEFAULT_PARSE_CONCURRENCY,
     ) -> None:
@@ -222,6 +228,7 @@ class IngestPipeline:
         self.fulltext_index = fulltext_index
         self.embedder = embedder
         self.resolver = resolver
+        self.title_inferrer = title_inferrer
         self.max_file_bytes = int(max_file_mb * 1024 * 1024)
         self.parse_concurrency = max(1, parse_concurrency)
         self.manifest_store = ManifestStore(self.index_dir)
@@ -321,10 +328,19 @@ class IngestPipeline:
             if arxiv_id:
                 doi = f"10.48550/arXiv.{arxiv_id}"
                 logger.debug("由 arXiv 编号构造 DOI：%s", doi)
+        # 本地没有可用标题时，用 LLM 从首页推断一个——它既是给元数据来源的**查询线索**
+        # （没有标题与 DOI 时，来源根本无从查起，形成"没标题→查不到→永远没标题"的死循环），
+        # 也是最终的兜底标题。默认关闭，因为它把索引从纯本地计算变成依赖外部服务。
+        inferred_title: str | None = None
+        if self.title_inferrer is not None and not hints.get("title"):
+            inferred_title = await self.title_inferrer.infer(
+                document.pages[0].text if document.pages else ""
+            )
+
         patch = SourcePatch(
             # 只有**真实的内嵌标题**才作为查询线索；文件名不在其中——
             # 用文件名去 Crossref 模糊检索只会搜出无关论文。
-            title=hints.get("title"),
+            title=hints.get("title") or inferred_title,
             authors=_split_author_string(hints.get("authors")),
             doi=doi,
         )
@@ -335,7 +351,10 @@ class IngestPipeline:
             key=make_source_key(doi=patch.doi, content_hash=digest),
             content_hash=digest,
             rel_path=identifier,
-            title=patch.title or hints.get("fallback_title") or path.stem,
+            # 优先级：内嵌标题 > LLM 推断 > 元数据来源补的 > 文件名。
+            # LLM 推断排在文件名之前，因为文件名对读者几乎没有信息量
+            # （``01_Lewis2020_RAG奠基论文`` 尚可，``paperqa2`` 则完全无用）。
+            title=patch.title or inferred_title or hints.get("fallback_title") or path.stem,
             authors=patch.authors or [],
             year=patch.year,
             doi=patch.doi,
@@ -420,6 +439,8 @@ class IngestPipeline:
             stored_sources.pop(entry.source_key, None)
             report.removed.append(identifier)
 
+        if self.title_inferrer is not None:
+            report.usage = report.usage.merge(self.title_inferrer.last_usage)
         report.fragment_count = sum(
             entry.fragment_count for entry in manifest.entries.values() if entry.status == "ok"
         )
@@ -499,7 +520,25 @@ class IngestPipeline:
                             identifier,
                             previous.source_key,
                         )
-                await self._index_fragments(source, fragments)
+                try:
+                    await self._index_fragments(source, fragments)
+                except Exception as error:  # noqa: BLE001
+                    # **写入索引的失败同样必须被隔离在单个文件内。**
+                    # 早先这里没有 try：一个文件在写全文索引时抛出
+                    # （实测是 PDF 解析出的孤立代理项让 tantivy 编码失败），
+                    # 异常会冲出 worker、掀翻整个 task group，
+                    # 于是**其余 35 篇已解析完的论文全部作废**。
+                    # 单文件失败率再低，这个放大效应也不可接受。
+                    logger.exception("写入索引失败：%s", identifier)
+                    async with lock:
+                        report.failed.append((identifier, f"写入索引失败：{error}"))
+                        manifest.entries[identifier] = ManifestEntry(
+                            hash=digest,
+                            source_key=previous.source_key if previous else "",
+                            status="failed",
+                            error=f"写入索引失败：{error}",
+                        )
+                    return
 
                 async with lock:
                     manifest.entries[identifier] = ManifestEntry(

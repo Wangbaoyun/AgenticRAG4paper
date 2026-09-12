@@ -317,6 +317,15 @@ def build_ingest_pipeline(settings: Settings, services: Services) -> object:
     **同一批索引对象**，但摄入需要的是"往里写"的视角。
     """
     from scitrace.pipeline.ingest import IngestPipeline  # noqa: PLC0415
+    from scitrace.pipeline.title_inference import LLMTitleInferrer  # noqa: PLC0415
+
+    title_inferrer = None
+    if settings.metadata.llm_title_inference:
+        title_inferrer = LLMTitleInferrer(
+            llm=services.llm("summary"),   # 用便宜的那一档：这是摘要级任务，不需要主模型
+            prompts=services.prompts,
+            max_chars=settings.metadata.llm_title_max_chars,
+        )
 
     return IngestPipeline(
         index_dir=settings.index_dir,
@@ -326,5 +335,6 @@ def build_ingest_pipeline(settings: Settings, services: Services) -> object:
         fulltext_index=services.fulltext_index,
         embedder=services.embedder,
         resolver=services.resolver,
+        title_inferrer=title_inferrer,
         max_file_mb=settings.ingest.max_file_mb,
     )

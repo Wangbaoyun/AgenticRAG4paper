@@ -108,6 +108,10 @@ class AgentRuntime:
             max_tokens=self.settings.agent.max_tokens,
             max_cost_usd=self.settings.agent.max_cost_usd,
         )
+        # 配了成本上限、却拿不到可信成本 → 闸门实际上不生效。
+        # 这种情况必须明确告知，否则用户会以为成本受到管控。
+        if self.budget.cost_gate_active and not self.services.usage.cost_known:
+            self.state.notes.append("cost_gate_inactive")
         self.timing = StageTiming()
         self._step = 0
 
@@ -300,6 +304,11 @@ class AgentRuntime:
         if "synthesis_failed" in self.state.notes:
             # 合成故障优先于一切：用户拿到的是"没有答案"，而不是"不确定的答案"。
             return SessionStatus.FAIL
+        answer = self.state.answer
+        if answer is not None and answer.uncited:
+            # 模型答了但没引用：这**不是**拒答，而是模型违反了引用约束。
+            # 单独成态，使用方才能区分"系统说不知道"与"系统给了无据的答案"。
+            return SessionStatus.UNCITED
         for reason in ("timeout", "budget_exceeded", "max_steps_exceeded", "no_new_evidence"):
             if reason in self.state.notes:
                 return SessionStatus.TRUNCATED

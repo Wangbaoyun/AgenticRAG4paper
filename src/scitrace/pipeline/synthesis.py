@@ -212,13 +212,18 @@ def bind_citations(
                 # 而不是让参考文献表与正文引用数量对不上。
                 references[reference_key] = _minimal_bibtex(reference_key)
 
+    uncited = not citations
     answer = Answer(
         text=text,
         raw_text=raw_text,
         citations=citations,
         references=references,
-        refused=not citations,
-        refusal_reason="" if citations else "答案未引用任何有效证据",
+        # refused 仍为 True：没有引用的答案**不可作为依据呈现**。
+        # 但原因单独用 uncited 标出，让上层能区分"证据不足"（正常）
+        # 与"模型没按引用约束作答"（要修）。
+        refused=uncited,
+        refusal_reason="" if citations else "模型给出了答案但未引用任何有效证据",
+        uncited=uncited,
     )
     if dangling:
         logger.warning("本次答案剥离了 %d 处悬空引用", dangling)
@@ -331,6 +336,7 @@ class AnswerSynthesizer:
             prompt_tokens=response.prompt_tokens,
             completion_tokens=response.completion_tokens,
             estimated_cost_usd=response.cost_usd,
+            cost_known=response.cost_known,
             llm_calls=1,
         )
 
@@ -359,6 +365,7 @@ class AnswerSynthesizer:
                     prompt_tokens=response.prompt_tokens,
                     completion_tokens=response.completion_tokens,
                     estimated_cost_usd=response.cost_usd,
+                    cost_known=response.cost_known,
                     llm_calls=1,
                 )
             )

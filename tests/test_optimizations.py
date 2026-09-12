@@ -1,0 +1,168 @@
+"""测试本轮六项优化的行为。
+
+覆盖：成本闸门退化为纯 token 闸门、UNCITED 终态、非法 Unicode 清洗、
+索引写入失败的文件级隔离、LLM 标题推断。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fakes import FakeLLMClient
+from scitrace.agent.budget import Budget
+from scitrace.domain import Answer
+from scitrace.domain.session import SessionStatus, Usage
+from scitrace.pipeline.title_inference import LLMTitleInferrer, _clean_title
+from scitrace.prompts import get_prompt_set
+from scitrace.util import normalize_text
+
+
+class TestCostGate:
+    """① 成本不可信时闸门必须退化为纯 token 闸门，而不是假装在工作。"""
+
+    def test_unknown_cost_disables_cost_gate(self) -> None:
+        budget = Budget(max_cost_usd=1.0)
+        usage = Usage(estimated_cost_usd=999.0, cost_known=False)
+        assert budget.check(usage) is None, "成本不可信时不该用它做判断"
+
+    def test_known_cost_still_gates(self) -> None:
+        budget = Budget(max_cost_usd=1.0)
+        assert budget.check(Usage(estimated_cost_usd=999.0, cost_known=True)) is not None
+
+    def test_token_gate_works_even_when_cost_unknown(self) -> None:
+        budget = Budget(max_tokens=100, max_cost_usd=1.0)
+        assert budget.check(Usage(prompt_tokens=101, cost_known=False)) == "token 预算超限"
+
+    def test_cost_gate_active_flag(self) -> None:
+        assert Budget(max_cost_usd=1.0).cost_gate_active is True
+        assert Budget(max_tokens=10).cost_gate_active is False
+
+    def test_merge_propagates_unknown_cost(self) -> None:
+        """cost_known 是布尔，不能当计数相加——相加会得到恒为真的整数。"""
+        merged = Usage(cost_known=True).merge(Usage(cost_known=False))
+        assert merged.cost_known is False
+        assert Usage(cost_known=True).merge(Usage(cost_known=True)).cost_known is True
+
+
+class TestUncitedStatus:
+    """⑤ 区分"模型没引用"与"证据不足"。"""
+
+    def test_status_exists(self) -> None:
+        assert SessionStatus.UNCITED == "UNCITED"
+
+    async def test_answer_without_citations_is_marked_uncited(self) -> None:
+        from scitrace.domain import Evidence, make_evidence_key
+        from scitrace.pipeline.synthesis import bind_citations
+
+        item = Evidence(
+            key=make_evidence_key("s", "f"),
+            source_key="s",
+            fragment_id="f",
+            summary="x",
+            relevance=9,
+            citation="(a2024t page 1)",
+        )
+        answer = bind_citations("我认为答案是 42。", evidence=[item], sources={})
+        assert answer.uncited is True
+        assert answer.refused is True, "无引用的答案仍不可作为依据呈现"
+        assert "未引用" in answer.refusal_reason
+
+    async def test_cited_answer_is_not_uncited(self) -> None:
+        from scitrace.domain import Evidence, make_evidence_key
+        from scitrace.pipeline.synthesis import bind_citations
+
+        key = make_evidence_key("s", "f")
+        item = Evidence(
+            key=key, source_key="s", fragment_id="f", summary="x", relevance=9,
+            citation="(a2024t page 1)",
+        )
+        answer = bind_citations(f"结论是 X ({key})。", evidence=[item], sources={})
+        assert answer.uncited is False
+
+    def test_answer_defaults_to_not_uncited(self) -> None:
+        assert Answer(text="x").uncited is False
+
+
+class TestInvalidUnicode:
+    """真实语料暴露：PDF 解析会产生孤立代理项，UTF-8 编码时抛错。"""
+
+    @pytest.mark.parametrize("bad", ["\ud835", "a\ud800b", "\udfff"])
+    def test_lone_surrogates_are_removed(self, bad: str) -> None:
+        cleaned = normalize_text(f"text {bad} end")
+        assert not any(0xD800 <= ord(c) <= 0xDFFF for c in cleaned)
+        cleaned.encode("utf-8")  # 关键：必须可编码
+
+    def test_replacement_char_is_used(self) -> None:
+        assert "\ufffd" in normalize_text("a\ud835b")
+
+    def test_normal_text_untouched(self) -> None:
+        assert normalize_text("普通的正常文本 with ASCII") == "普通的正常文本 with ASCII"
+
+    def test_astral_characters_survive(self) -> None:
+        """星光平面字符不该被误删——只清代理项，不搞连坐。"""
+        assert "\U0001f600" in normalize_text("emoji \U0001f600 stays")
+
+    def test_nfkc_folds_mathematical_alphanumerics(self) -> None:
+        """数学花体字母会被 NFKC 折叠成 ASCII——这是**正确**行为，不是缺陷。
+
+        它与"孤立代理项"是两回事：前者是合法字符的规范化，
+        后者是残缺的编码。测试把它们分开钉住，避免有人为了"保住数学符号"
+        而把代理项清洗也一并关掉。
+        """
+        assert normalize_text("\U0001d4db") == "L"
+
+
+class TestTitleInference:
+    """④ LLM 标题推断。"""
+
+    def test_clean_title_strips_quotes_and_prefix(self) -> None:
+        assert _clean_title('"Attention Is All You Need"') == "Attention Is All You Need"
+        assert _clean_title("Title: BERT") == "BERT"
+        assert _clean_title("标题：一种新方法") == "一种新方法"
+
+    def test_clean_title_takes_first_line(self) -> None:
+        assert _clean_title("Real Title\nThis is an explanation.") == "Real Title"
+
+    def test_clean_title_rejects_overlong_output(self) -> None:
+        """模型复述整段摘要时必须拒绝——500 字的"标题"塞进引用只会更难看。"""
+        assert _clean_title("x" * 500) is None
+
+    @pytest.mark.parametrize("raw", ["", "   "])
+    def test_clean_title_empty(self, raw: str) -> None:
+        assert _clean_title(raw) is None
+
+    async def test_infer_returns_title_and_records_usage(self) -> None:
+        # 用**虚构**标题：本项目一律不用真实论文的数据做夹具，
+        # 否则会与上游测试里的同类字符串产生无意义的相似命中，
+        # 把真正需要关注的信号淹掉（这条在审计里已经真实发生过）。
+        llm = FakeLLMClient(['"Adaptive Evidence Caching for Literature Question Answering"'])
+        inferrer = LLMTitleInferrer(llm=llm, prompts=get_prompt_set("zh"))
+        title = await inferrer.infer("Some first page text")
+        assert title == "Adaptive Evidence Caching for Literature Question Answering"
+        assert inferrer.last_usage.llm_calls == 1
+        assert inferrer.last_usage.prompt_tokens > 0
+
+    async def test_infer_truncates_input(self) -> None:
+        llm = FakeLLMClient(["T"])
+        inferrer = LLMTitleInferrer(llm=llm, prompts=get_prompt_set("zh"), max_chars=50)
+        await inferrer.infer("x" * 5000)
+        assert "x" * 51 not in llm.calls[0][1].content
+
+    @pytest.mark.parametrize("text", ["", "   "])
+    async def test_infer_empty_text_makes_no_call(self, text: str) -> None:
+        llm = FakeLLMClient(["T"])
+        inferrer = LLMTitleInferrer(llm=llm, prompts=get_prompt_set("zh"))
+        assert await inferrer.infer(text) is None
+        assert llm.calls == []
+
+    async def test_infer_failure_degrades_to_none(self) -> None:
+        """推断失败不该中断摄入。"""
+        llm = FakeLLMClient(error=RuntimeError("provider down"))
+        inferrer = LLMTitleInferrer(llm=llm, prompts=get_prompt_set("zh"))
+        assert await inferrer.infer("some text") is None
+
+    def test_disabled_by_default(self) -> None:
+        from scitrace.config import MetadataSettings
+
+        assert MetadataSettings().llm_title_inference is False

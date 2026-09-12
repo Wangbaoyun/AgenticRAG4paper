@@ -60,6 +60,10 @@ class PromptSet:
     literature_query_system: str
     literature_query_user: Template
 
+    # ---- 标题推断 ----
+    title_inference_system: Template
+    title_inference_user: Template
+
     def _render(self, template: Template, **values: str) -> str:
         try:
             return template.substitute(**values)
@@ -95,6 +99,13 @@ class PromptSet:
         """渲染材料中的一条证据。"""
         return self._render(
             self.context_entry, evidence_key=evidence_key, citation=citation, summary=summary
+        )
+
+    def render_title_inference(self, *, text: str) -> tuple[str, str]:
+        """渲染"从首页推断标题"的提示词，返回 ``(system, user)``。"""
+        return (
+            self._render(self.title_inference_system, refusal=INSUFFICIENT_EVIDENCE),
+            self._render(self.title_inference_user, text=text),
         )
 
     def render_literature_query(self, *, question: str) -> tuple[str, str]:
@@ -185,6 +196,22 @@ $prior_answer
     context_entry=Template("""\
 [$evidence_key] $citation
 $summary"""),
+    title_inference_system=Template("""\
+下面给你一篇学术论文首页的原始文本，它由 PDF 解析而来，因此可能夹杂页眉、页脚、
+作者单位、邮箱、arXiv 编号等与标题无关的内容。
+
+你的任务是识别出这篇论文的**标题**。
+
+要求：
+- 只输出标题本身，不要加引号、不要加 "Title:" 之类的说明、不要输出任何其他文字；
+- 标题可能跨多行，请在输出时合并为一行；
+- 若文本中有多个候选（例如同时出现期刊名与论文标题），选择**论文标题**；
+- 若确实无法判断，只输出 $refusal。"""),
+    title_inference_user=Template("""\
+首页文本：
+---
+$text
+---"""),
     literature_query_system="""\
 你负责把用户的问题改写成适合在科研文献库中检索的查询串。
 
@@ -291,6 +318,24 @@ whose key is absent from the current material must be removed along with the key
     context_entry=Template("""\
 [$evidence_key] $citation
 $summary"""),
+    title_inference_system=Template("""\
+Below is the raw text of the first page of an academic paper, extracted from a PDF.
+It therefore contains headers, footers, author affiliations, emails, arXiv identifiers and
+other material unrelated to the title.
+
+Your task is to identify the paper's **title**.
+
+Requirements:
+- Output the title only. No quotation marks, no "Title:" prefix, no other text.
+- The title may span several lines; join it into a single line.
+- If several candidates appear (e.g. a journal name alongside the paper title), choose the
+  **paper title**.
+- If you genuinely cannot tell, output only $refusal."""),
+    title_inference_user=Template("""\
+First page text:
+---
+$text
+---"""),
     literature_query_system="""\
 Your job is to rewrite the user's question into a query string suitable for searching a
 scientific literature index.

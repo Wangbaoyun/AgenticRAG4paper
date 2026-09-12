@@ -134,13 +134,15 @@ class LiteLLMClient:
         prompt_tokens = _as_int(getattr(usage, "prompt_tokens", 0))
         completion_tokens = _as_int(getattr(usage, "completion_tokens", 0))
 
+        cost_usd, cost_known = _estimate_cost(raw, litellm_module)
         return LLMResponse(
             content=strip_reasoning_tags(content),
             tool_calls=tool_calls,
             model=str(getattr(raw, "model", "") or ""),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            cost_usd=_estimate_cost(raw, litellm_module),
+            cost_usd=cost_usd,
+            cost_known=cost_known,
             finish_reason=finish_reason,
         )
 
@@ -154,12 +156,18 @@ def _as_int(value: Any) -> int:
     return max(0, number)
 
 
-def _estimate_cost(raw: Any, litellm_module: Any) -> float:
-    """估算本次调用的美元成本。
+def _estimate_cost(raw: Any, litellm_module: Any) -> tuple[float, bool]:
+    """估算本次调用的美元成本，并**如实报告成本是否可信**。
 
-    成本拿不到时返回 ``0.0`` 并告警，**不抛异常**：成本是观测指标，
-    不该因为某个提供商不在 LiteLLM 的价格表里就让整次问答失败。
-    代价是"未知模型"会被统计成免费——因此用 warning 让它可见。
+    成本拿不到时不抛异常（成本是观测指标，不该让整次问答失败），
+    但必须返回 ``cost_known=False`` —— 只是"记 0 并告警"是不够的：
+    告警会被淹没在日志里，而 ``Usage.estimated_cost_usd == 0`` 会让
+    上层的成本闸门看起来在工作、实际永远不触发。本项目的实机运行
+    正是这样：`deepseek-v4-flash` 不在价格表中，一次 agentic 问答烧掉
+    171k token，而成本闸门全程沉默。
+
+    Returns:
+        ``(成本, 是否可信)``。
     """
     try:
         cost = litellm_module.completion_cost(completion_response=raw)
@@ -172,8 +180,8 @@ def _estimate_cost(raw: Any, litellm_module: Any) -> float:
                 model,
                 error,
             )
-        return 0.0
+        return 0.0, False
     try:
-        return max(0.0, float(cost))
+        return max(0.0, float(cost)), True
     except (TypeError, ValueError):
-        return 0.0
+        return 0.0, False

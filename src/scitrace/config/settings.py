@@ -259,6 +259,17 @@ class MetadataSettings(_ConfigGroup):
     semantic_scholar_api_key: SecretStr | None = None
     openalex_mailto: str | None = None
     retraction_csv: Path | None = None
+    llm_title_inference: bool = Field(
+        default=False,
+        description=(
+            "本地与在线元数据都拿不到标题时，是否用 LLM 从首页推断一个。"
+            "**默认关闭**：开启后索引将从「纯本地计算」变成「依赖外部服务并产生 token 成本」，"
+            "这个变化必须由使用者显式选择。"
+        ),
+    )
+    llm_title_max_chars: int = Field(
+        default=2000, ge=200, description="送进标题推断的首页字符数上限"
+    )
     timeout_s: float = Field(default=15.0, gt=0.0)
     max_retries: int = Field(default=3, ge=0, le=10)
     max_concurrency: int = Field(default=4, ge=1)

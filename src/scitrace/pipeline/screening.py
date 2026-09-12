@@ -259,6 +259,7 @@ class LLMScreener(_ScreenerBase):
                             prompt_tokens=response.prompt_tokens,
                             completion_tokens=response.completion_tokens,
                             estimated_cost_usd=response.cost_usd,
+                            cost_known=response.cost_known,
                             llm_calls=1,
                             parse_failures=0 if payload is not None else 1,
                         )
@@ -396,6 +397,7 @@ class CrossEncoderScreener(_ScreenerBase):
                             prompt_tokens=response.prompt_tokens,
                             completion_tokens=response.completion_tokens,
                             estimated_cost_usd=response.cost_usd,
+                            cost_known=response.cost_known,
                             llm_calls=1,
                             parse_failures=1 if parse_failed else 0,
                         )

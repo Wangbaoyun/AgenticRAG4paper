@@ -44,6 +44,13 @@ class SessionStatus(StrEnum):
     FAIL = "FAIL"
     #: 索引为空或证据不足，明确拒答。**这是正常终态，不是错误。**
     REFUSED = "REFUSED"
+    #: 模型给出了答案，但**没有引用任何有效证据**。
+    #:
+    #: 与 ``REFUSED`` 必须分开：``REFUSED`` 是"证据不足"这一**正常**结果，
+    #: 而 ``UNCITED`` 意味着模型违反了引用约束——它需要的是改提示词或换模型，
+    #: 不是接受。把两者合并成一个状态，使用方就无法区分"系统说不知道"
+    #: 与"系统给了没有依据的答案"。
+    UNCITED = "UNCITED"
 
 
 class Usage(BaseModel):
@@ -58,6 +65,15 @@ class Usage(BaseModel):
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
     estimated_cost_usd: float = Field(default=0.0, ge=0.0)
+    cost_known: bool = Field(
+        default=True,
+        description=(
+            "本次会话的成本是否**可信**。False 表示至少有一次调用的模型不在价格表中，"
+            "``estimated_cost_usd`` 只是下界（通常为 0）。"
+            "**必须显式标记**：把未知成本静默记成 0，会让成本闸门看起来在工作而实际从不触发——"
+            "这是本项目实测踩过的坑（deepseek-v4-flash 不在 litellm 价格表中）。"
+        ),
+    )
     llm_calls: int = Field(default=0, ge=0)
     cache_hits: int = Field(default=0, ge=0)
     parse_failures: int = Field(
@@ -80,13 +96,19 @@ class Usage(BaseModel):
         return self.prompt_tokens + self.completion_tokens
 
     def merge(self, other: Self) -> Self:
-        """累加两份用量，返回新对象。"""
-        return type(self)(
-            **{
-                name: getattr(self, name) + getattr(other, name)
-                for name in type(self).model_fields
-            }
-        )
+        """累加两份用量，返回新对象。
+
+        ``cost_known`` 是**布尔**而非计数，用逻辑与合并：
+        只要有一份用量的成本不可信，合并结果就不可信。把它也当计数相加会得到
+        一个恒为真的整数，让标记失去意义。
+        """
+        merged = {
+            name: getattr(self, name) + getattr(other, name)
+            for name in type(self).model_fields
+            if name != "cost_known"
+        }
+        merged["cost_known"] = self.cost_known and other.cost_known
+        return type(self)(**merged)
 
 
 class StageTiming(BaseModel):
@@ -131,6 +153,15 @@ class Answer(BaseModel):
     )
     refused: bool = False
     refusal_reason: str = ""
+    uncited: bool = Field(
+        default=False,
+        description=(
+            "模型给出了答案正文，但没有引用任何有效证据。"
+            "与 ``refused`` 的区别在于**原因**：拒答是「证据不足」这一正常结果，"
+            "而本条是模型违反了引用约束。二者的处置不同（前者接受，后者要改提示词或换模型），"
+            "因此不能合并成一个布尔量。"
+        ),
+    )
 
     @property
     def has_citations(self) -> bool:
