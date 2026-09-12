@@ -15,6 +15,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict
 
+from scitrace.util.sanitize import SanitizedModel
 from scitrace.domain.source import Source, SourceKey
 
 __all__ = [
@@ -128,10 +129,8 @@ def render_bibtex(source: Source, *, reference_key: str | None = None) -> str:
     return f"@{entry_type}{{{key},\n{body}\n}}"
 
 
-class Citation(BaseModel):
+class Citation(SanitizedModel):
     """答案中一处引用的完整解析结果——用于 ``--json`` 输出与可回溯性校验。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     evidence_key: str
     source_key: SourceKey

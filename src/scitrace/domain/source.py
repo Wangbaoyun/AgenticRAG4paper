@@ -17,6 +17,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from scitrace.util.sanitize import SanitizedModel
 from scitrace.util.hashing import normalize_text, sha256_hex
 
 __all__ = ["Source", "SourceKey", "SourcePatch", "make_source_key", "normalize_doi"]
@@ -68,13 +69,11 @@ def make_source_key(*, doi: str | None, content_hash: str) -> SourceKey:
     return sha256_hex(basis, length=16)
 
 
-class SourcePatch(BaseModel):
+class SourcePatch(SanitizedModel):
     """稀疏的书目元数据补丁。
 
     所有字段可空，``None`` 语义为"本来源未提供"，而非"该字段确实为空"。
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     title: str | None = None
     authors: list[str] | None = None
@@ -137,10 +136,8 @@ class SourcePatch(BaseModel):
         return type(self)(**merged)
 
 
-class Source(BaseModel):
+class Source(SanitizedModel):
     """一篇文献：稳定标识、本地溯源信息与书目元数据。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     # ---- 标识与溯源 ----
     key: SourceKey

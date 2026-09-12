@@ -15,6 +15,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scitrace.domain.source import SourceKey
+from scitrace.util.sanitize import SanitizedModel
 from scitrace.util.hashing import sha256_hex
 
 __all__ = ["EVIDENCE_KEY_PREFIX", "Evidence", "make_evidence_key"]
@@ -42,10 +43,8 @@ def make_evidence_key(source_key: SourceKey, fragment_id: str) -> str:
     return f"{EVIDENCE_KEY_PREFIX}{sha256_hex(f'{source_key}:{fragment_id}', length=8)}"
 
 
-class Evidence(BaseModel):
+class Evidence(SanitizedModel):
     """一条可用于支撑答案结论的证据。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     key: str
     source_key: SourceKey

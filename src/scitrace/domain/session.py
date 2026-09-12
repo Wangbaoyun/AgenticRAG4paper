@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scitrace.domain.citation import Citation
 from scitrace.domain.evidence import Evidence
+from scitrace.util.sanitize import SanitizedModel
 from scitrace.util.hashing import derive_key
 
 __all__ = [
@@ -53,14 +54,12 @@ class SessionStatus(StrEnum):
     UNCITED = "UNCITED"
 
 
-class Usage(BaseModel):
+class Usage(SanitizedModel):
     """token 用量与成本统计。【原创增量 ④ 的可观测基础】
 
     所有计数默认 0，且 :meth:`merge` 返回新对象——累计用量在多处并发发生
     （并发筛选、多轮 Agent），用不可变累加避免共享可变状态带来的竞态。
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
@@ -111,10 +110,8 @@ class Usage(BaseModel):
         return type(self)(**merged)
 
 
-class StageTiming(BaseModel):
+class StageTiming(SanitizedModel):
     """各阶段耗时（秒），用于定位性能瓶颈。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     ingest_s: float = Field(default=0.0, ge=0.0)
     retrieve_s: float = Field(default=0.0, ge=0.0)
@@ -123,14 +120,12 @@ class StageTiming(BaseModel):
     total_s: float = Field(default=0.0, ge=0.0)
 
 
-class ActionRecord(BaseModel):
+class ActionRecord(SanitizedModel):
     """一次工具调用的记录。
 
     只保存观测结果的**摘要**而非全文：完整观测可能包含数十个片段的原文，
     全量落盘会让会话文件膨胀到 MB 级，而其内容已可从证据集还原。
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     step: int = Field(ge=0)
     tool: str
@@ -140,10 +135,8 @@ class ActionRecord(BaseModel):
     error: str | None = None
 
 
-class Answer(BaseModel):
+class Answer(SanitizedModel):
     """最终答案及其引用解析结果。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(description="已把引用键替换为可读文内引用的答案正文")
     raw_text: str = Field(default="", description="模型原始输出，保留以便排障与审计")
@@ -169,10 +162,8 @@ class Answer(BaseModel):
         return bool(self.citations)
 
 
-class Session(BaseModel):
+class Session(SanitizedModel):
     """一次问答的完整状态。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     session_id: str
     question: str

@@ -23,6 +23,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from scitrace.domain import Session, Source
+from scitrace.util.sanitize import sanitize_unicode
 
 logger = logging.getLogger(__name__)
 
@@ -90,12 +91,21 @@ class _JsonlStore:
         return records
 
     def save(self, records: Iterable[object]) -> None:
-        """原子写入全部记录。"""
+        """原子写入全部记录。
+
+        写入前把每一行都过一遍 :func:`sanitize_unicode` —— 这是**最后一道兜底**，
+        不是第一道防线。模型层的通配校验器负责让内存中的对象保持干净，
+        这里只保证"无论如何都写得出去"。
+
+        为什么需要它：``model_dump_json()`` 在遇到孤立代理项时会直接抛
+        ``PydanticSerializationError``，而那发生在**序列化过程中**，
+        届时已经没有机会再做清洗。所以清洗必须在序列化之前完成。
+        """
         self.root.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         with temporary.open("w", encoding="utf-8") as handle:
             for record in records:
-                handle.write(self._dump(record))
+                handle.write(sanitize_unicode(self._dump(record)))
                 handle.write("\n")
         temporary.replace(self.path)
 

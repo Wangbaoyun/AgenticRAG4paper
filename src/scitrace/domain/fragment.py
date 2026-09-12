@@ -14,6 +14,7 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scitrace.domain.source import SourceKey
+from scitrace.util.sanitize import SanitizedModel
 from scitrace.util.hashing import derive_key, normalize_text
 
 __all__ = ["Fragment", "ParsedDocument", "ParsedPage", "make_fragment_id"]
@@ -49,28 +50,24 @@ def make_fragment_id(
     return derive_key(source_key, document_hash, "/".join(section_path), str(chunk_index))
 
 
-class ParsedPage(BaseModel):
+class ParsedPage(SanitizedModel):
     """解析出的单页文本。
 
     ``page_number`` 为 **1-based**，与人的阅读习惯一致；引用渲染时直接使用，
     不需要 ±1 转换——这类偏移错误是引用不可信的主要来源之一。
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     page_number: int = Field(ge=1)
     text: str
 
 
-class ParsedDocument(BaseModel):
+class ParsedDocument(SanitizedModel):
     """解析器（``ports.parser.DocumentParser``）的统一输出。
 
     解析器**只负责把文件变成文本**，不做分块、不做元数据补全、不碰索引——
     这三件事分别属于 ``pipeline.chunking`` 与 ``adapters.metadata``。
     保持解析器的单一职责，才能让"换 PDF 解析后端"不影响其余任何环节。
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     pages: list[ParsedPage]
     hints: dict[str, str] = Field(
@@ -90,10 +87,8 @@ class ParsedDocument(BaseModel):
         return "\n\n".join(page.text for page in self.pages)
 
 
-class Fragment(BaseModel):
+class Fragment(SanitizedModel):
     """文献切分出的一个文本块——检索与引用的最小单位。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     fragment_id: str
     source_key: SourceKey

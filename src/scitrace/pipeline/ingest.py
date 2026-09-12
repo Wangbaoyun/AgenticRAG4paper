@@ -41,6 +41,7 @@ from scitrace.ports import (
 )
 from scitrace.service import SourceStore
 from scitrace.util.hashing import hash_file
+from scitrace.util.sanitize import SanitizedModel, sanitize_unicode
 from scitrace.util.text import find_arxiv_id, find_doi
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,8 @@ DEFAULT_PARSE_CONCURRENCY = 4
 _ALWAYS_SCAN_SUFFIXES = frozenset({".pdf", ".txt", ".md", ".markdown", ".text"})
 
 
-class ManifestEntry(BaseModel):
+class ManifestEntry(SanitizedModel):
     """清单中的单条记录。"""
-
-    model_config = ConfigDict(extra="forbid")
 
     hash: str
     source_key: str
@@ -76,14 +75,12 @@ class ManifestEntry(BaseModel):
     fragment_count: int = Field(default=0, ge=0)
 
 
-class Manifest(BaseModel):
+class Manifest(SanitizedModel):
     """索引清单：``相对路径 -> 记录``。
 
     ``schema`` 参与版本判断：schema 升级后旧清单会被整体丢弃并全量重建，
     因为字段语义可能已经变了，沿用旧清单比重建更危险。
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     schema_version: int = SCHEMA_VERSION
     entries: dict[str, ManifestEntry] = Field(default_factory=dict)
@@ -132,7 +129,11 @@ class ManifestStore:
         """
         self.index_dir.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        # 与 SourceStore 同理的最后一道兜底：清洗必须发生在序列化**之前**，
+        # 因为孤立代理项会让 model_dump_json() 直接抛错。
+        temporary.write_text(
+            sanitize_unicode(manifest.model_dump_json(indent=2)), encoding="utf-8"
+        )
         temporary.replace(self.path)
 
 
@@ -466,102 +467,109 @@ class IngestPipeline:
         limiter = anyio.Semaphore(self.parse_concurrency)
         lock = anyio.Lock()
 
+        async def record_failure(
+            identifier: str, digest: str, reason: str
+        ) -> None:
+            """把一个文件的失败写进报告与清单。"""
+            previous = manifest.entries.get(identifier)
+            async with lock:
+                report.failed.append((identifier, reason))
+                manifest.entries[identifier] = ManifestEntry(
+                    hash=digest,
+                    source_key=previous.source_key if previous else "",
+                    status="failed",
+                    error=reason,
+                )
+
+        async def process(identifier: str, path: Path, digest: str) -> None:
+            """处理单个文件（**不含**异常兜底，由 worker 负责）。"""
+            previous = manifest.entries.get(identifier)
+            try:
+                source, fragments = await self.ingest_file(
+                    path, identifier=identifier, digest=digest
+                )
+            except (ParseError, ValueError) as error:
+                logger.warning("摄入失败：%s（%s）", identifier, error)
+                await record_failure(identifier, digest, str(error))
+                return
+            except Exception as error:  # noqa: BLE001 — 未预期错误也要记录而非中断整批
+                logger.exception("摄入出现未预期错误：%s", identifier)
+                await record_failure(identifier, digest, f"未预期错误：{error}")
+                return
+
+            # 先清掉该文件的上一版片段，再写入新片段。
+            #
+            # 必须无条件清理（而不只是 source_key 变化时）：`fragment_id` 含内容哈希，
+            # 内容一变旧 id 就不再被新片段覆盖，不清理会留下陈旧内容——
+            # 表现是"我明明改了论文，检索到的还是旧段落"。
+            #
+            # 唯一的例外是**另一个清单项共用同一个 source_key**（同一 DOI 的
+            # 预印本与正式版）。此时 `remove(source_key)` 会连对方的片段一起删掉，
+            # 所以跳过清理；代价是这一项自己的旧片段可能残留。
+            # 这是已知且刻意接受的取舍——索引接口以 source_key 为删除单位，
+            # 要精确到文件级需要端口支持按 fragment_id 删除。
+            if previous is not None and previous.source_key:
+                shared_with_other_file = any(
+                    entry.source_key == previous.source_key and key != identifier
+                    for key, entry in manifest.entries.items()
+                )
+                if not shared_with_other_file:
+                    await self._unindex_source(previous.source_key)
+                else:
+                    logger.debug(
+                        "%s 的 source_key 与其他文件共用（%s），跳过清理以避免误删",
+                        identifier,
+                        previous.source_key,
+                    )
+
+            await self._index_fragments(source, fragments)
+
+            async with lock:
+                manifest.entries[identifier] = ManifestEntry(
+                    hash=digest,
+                    source_key=source.key,
+                    status="ok",
+                    fragment_count=len(fragments),
+                )
+                if previous is not None:
+                    report.updated.append(identifier)
+                else:
+                    report.added.append(identifier)
+
+                existing = stored_sources.get(source.key)
+                if existing is not None and existing.rel_path != source.rel_path:
+                    # 同一个 DOI 出现在多个文件里（预印本 + 正式版）：
+                    # 归并为同一篇文献是正确的，但要让用户知道发生了什么，
+                    # 否则"我明明索引了 5 篇，怎么只有 4 篇"会无从解释。
+                    report.duplicate_sources.setdefault(
+                        source.key, [existing.rel_path]
+                    ).append(source.rel_path)
+                stored_sources[source.key] = source
+                report.sources[source.key] = source
+
         async def worker(identifier: str, path: Path, digest: str) -> None:
-            async with limiter:
-                previous = manifest.entries.get(identifier)
-                try:
-                    source, fragments = await self.ingest_file(
-                        path, identifier=identifier, digest=digest
-                    )
-                except (ParseError, ValueError) as error:
-                    logger.warning("摄入失败：%s（%s）", identifier, error)
-                    async with lock:
-                        report.failed.append((identifier, str(error)))
-                        manifest.entries[identifier] = ManifestEntry(
-                            hash=digest,
-                            source_key=previous.source_key if previous else "",
-                            status="failed",
-                            error=str(error),
-                        )
-                    return
-                except Exception as error:  # noqa: BLE001 — 未预期错误也要记录而非中断整批
-                    logger.exception("摄入出现未预期错误：%s", identifier)
-                    async with lock:
-                        report.failed.append((identifier, f"未预期错误：{error}"))
-                        manifest.entries[identifier] = ManifestEntry(
-                            hash=digest,
-                            source_key=previous.source_key if previous else "",
-                            status="failed",
-                            error=f"未预期错误：{error}",
-                        )
-                    return
+            """任务组的工作单元：**绝不允许异常逃离本函数**。
 
-                # 先清掉该文件的上一版片段，再写入新片段。
-                #
-                # 必须无条件清理（而不只是 source_key 变化时）：`fragment_id` 含内容哈希，
-                # 内容一变旧 id 就不再被新片段覆盖，不清理会留下陈旧内容——
-                # 表现是"我明明改了论文，检索到的还是旧段落"。
-                #
-                # 唯一的例外是**另一个清单项共用同一个 source_key**（同一 DOI 的
-                # 预印本与正式版）。此时 `remove(source_key)` 会连对方的片段一起删掉，
-                # 所以跳过清理；代价是这一项自己的旧片段可能残留。
-                # 这是已知且刻意接受的取舍——索引接口以 source_key 为删除单位，
-                # 要精确到文件级需要端口支持按 fragment_id 删除。
-                if previous is not None and previous.source_key:
-                    shared_with_other_file = any(
-                        entry.source_key == previous.source_key and key != identifier
-                        for key, entry in manifest.entries.items()
-                    )
-                    if not shared_with_other_file:
-                        await self._unindex_source(previous.source_key)
-                    else:
-                        logger.debug(
-                            "%s 的 source_key 与其他文件共用（%s），跳过清理以避免误删",
-                            identifier,
-                            previous.source_key,
-                        )
-                try:
-                    await self._index_fragments(source, fragments)
-                except Exception as error:  # noqa: BLE001
-                    # **写入索引的失败同样必须被隔离在单个文件内。**
-                    # 早先这里没有 try：一个文件在写全文索引时抛出
-                    # （实测是 PDF 解析出的孤立代理项让 tantivy 编码失败），
-                    # 异常会冲出 worker、掀翻整个 task group，
-                    # 于是**其余 35 篇已解析完的论文全部作废**。
-                    # 单文件失败率再低，这个放大效应也不可接受。
-                    logger.exception("写入索引失败：%s", identifier)
-                    async with lock:
-                        report.failed.append((identifier, f"写入索引失败：{error}"))
-                        manifest.entries[identifier] = ManifestEntry(
-                            hash=digest,
-                            source_key=previous.source_key if previous else "",
-                            status="failed",
-                            error=f"写入索引失败：{error}",
-                        )
-                    return
+            ## 为什么包住整个函数体，而不是逐个调用点
 
-                async with lock:
-                    manifest.entries[identifier] = ManifestEntry(
-                        hash=digest,
-                        source_key=source.key,
-                        status="ok",
-                        fragment_count=len(fragments),
-                    )
-                    if previous is not None:
-                        report.updated.append(identifier)
-                    else:
-                        report.added.append(identifier)
+            anyio 的 task group 语义是：**任何**一个子任务的未捕获异常都会
+            取消所有兄弟任务。因此每一个裸 ``await`` 都是一次"整批作废"的机会。
 
-                    existing = stored_sources.get(source.key)
-                    if existing is not None and existing.rel_path != source.rel_path:
-                        # 同一个 DOI 出现在多个文件里（预印本 + 正式版）：
-                        # 归并为同一篇文献是正确的，但要让用户知道发生了什么，
-                        # 否则"我明明索引了 5 篇，怎么只有 4 篇"会无从解释。
-                        report.duplicate_sources.setdefault(source.key, [existing.rel_path]).append(
-                            source.rel_path
-                        )
-                    stored_sources[source.key] = source
-                    report.sources[source.key] = source
+            这个坑本项目真实踩过：PDF 解析出的孤立代理项让 tantivy 编码失败，
+            异常冲出 worker 掀翻整个 task group，**其余 35 篇已解析完的论文全部作废**。
+            当时的修法是给 ``_index_fragments`` 单独加 try——但那只把下一次事故
+            推迟到下一个未加保护的语句（事后核查发现 ``_unindex_source`` 就仍在保护之外）。
+
+            正确的位置是**函数边界**：无论哪一步抛出，都只影响这一个文件。
+            清单与元数据落盘失败是刻意的例外，由 ``run()`` 统一处理——
+            清单与索引不一致比整次失败更危险。
+            """
+            try:
+                async with limiter:
+                    await process(identifier, path, digest)
+            except Exception as error:  # noqa: BLE001 - 见 docstring
+                logger.exception("摄入 %s 时出现未捕获异常", identifier)
+                await record_failure(identifier, digest, f"未捕获异常：{error}")
 
         async with anyio.create_task_group() as task_group:
             for identifier, path, digest in pending:
