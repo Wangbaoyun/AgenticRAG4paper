@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ask_parser.add_argument("--language", choices=["zh", "en"], default="zh")
     ask_parser.add_argument("--json", action="store_true", dest="as_json")
+    ask_parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="打印逐步执行追踪（工具序列、参数、观测长度、累计 token）",
+    )
 
     search_parser = subparsers.add_parser("search", help="只做检索，查看证据")
     search_parser.add_argument("query", help="查询串")
@@ -146,6 +151,17 @@ def _answer_payload(result, session_id: str) -> dict:  # noqa: ANN001
             "total_s": result.timing.total_s,
         },
         "notes": result.notes,
+        "actions": [
+            {
+                "step": action.step,
+                "tool": action.tool,
+                "arguments": action.arguments,
+                "observation_chars": action.observation_chars,
+                "tokens_after": action.tokens_after,
+                "duration_s": action.duration_s,
+            }
+            for action in result.actions
+        ],
     }
 
 
@@ -168,6 +184,38 @@ def _render_answer(payload: dict) -> str:
     )
     if payload["notes"]:
         lines.append(f"备注：{', '.join(payload['notes'])}")
+    return "\n".join(lines)
+
+
+def _render_trace(payload: dict) -> str:
+    """渲染逐步执行追踪。
+
+    存在的理由：Agentic 模式唯一一次真实运行烧掉 171,694 token，
+    而当时**看不到 token 花在哪一步**。没有这张表，任何关于成本来源的判断
+    都只能是猜测——包括我自己的。
+    """
+    actions = payload.get("actions") or []
+    if not actions:
+        return "（无工具调用：确定性流程未产生动作，或会话提前结束）"
+    lines = [
+        f"{'步':>3}  {'工具':<18}{'参数摘要':<34}{'观测':>7}{'本步':>8}{'累计':>9}{'耗时':>8}",
+        "-" * 82,
+    ]
+    previous = 0
+    for action in actions:
+        args = json.dumps(action["arguments"], ensure_ascii=False)
+        if len(args) > 32:
+            args = args[:31] + "…"
+        cumulative = action["tokens_after"]
+        lines.append(
+            f"{action['step']:>3}  {action['tool']:<18}{args:<34}"
+            f"{action['observation_chars']:>7}{cumulative - previous:>8}{cumulative:>9}"
+            f"{action['duration_s']:>7.2f}s"
+        )
+        previous = cumulative
+    total = payload["usage"]["prompt_tokens"] + payload["usage"]["completion_tokens"]
+    lines.append("-" * 82)
+    lines.append(f"合计 {total} token（注：工具内部调用计入其后一步）")
     return "\n".join(lines)
 
 
@@ -203,6 +251,9 @@ async def _cmd_ask(args: argparse.Namespace) -> int:
         await services.aclose()
 
     payload = _answer_payload(result, getattr(result, "session_id", ""))
+    if getattr(args, "trace", False) and not args.as_json:
+        print(_render_trace(payload))
+        print()
     _emit(payload, as_json=args.as_json, human=_render_answer(payload))
     # 拒答是正常终态，退出码仍为 0（SPEC §7）
     return EXIT_OK

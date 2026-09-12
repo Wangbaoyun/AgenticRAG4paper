@@ -38,27 +38,48 @@ NOT_APPLICABLE = "NOT_APPLICABLE"
 #: 证据不足以回答时使用的主哨兵（英文场景）。
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 
-#: 全部被认可的拒答表述。
+#: 只有**中文**拒答表述，且它们的判定必须带位置约束（见 :func:`is_refusal`）。
 #:
 #: 中文表述单独列出，而不只是把英文哨兵翻译过去：模型在使用中文回答时，
 #: 即使被明确要求输出英文哨兵，仍有一定概率输出对应的中文短语。
-#: 与其和模型较劲，不如把这两种都认下来——**拒答识别宁可宽松**：
-#: 误判为拒答的代价是"少回答一个问题"，漏判的代价是"编造一个答案"。
-REFUSAL_PHRASES: frozenset[str] = frozenset(
-    {
-        INSUFFICIENT_EVIDENCE,
-        "证据不足",
-        "证据不足，无法回答",
-        "无法回答",
-    }
+_ZH_REFUSAL_PHRASES: frozenset[str] = frozenset(
+    {"证据不足", "无法回答", "没有足够的信息", "资料不足"}
 )
+
+#: 全部被认可的拒答表述。
+#:
+#: **只用于"提示词必须向模型声明哪些表述算拒答"这类枚举场合**。
+#: 不要拿它去做子串判定——判定请用 :func:`is_refusal`，它带位置约束。
+REFUSAL_PHRASES: frozenset[str] = frozenset({INSUFFICIENT_EVIDENCE}) | _ZH_REFUSAL_PHRASES
+
+#: 判定"答案开头"的窗口长度。拒答是一句**声明**，会出现在开头；
+#: 而"证据不足"这四个字完全可能作为**被引用的材料内容**出现在正文中间。
+_REFUSAL_PREFIX_CHARS = 60
+
+#: 短答案阈值：整段答案很短时，判定可以放宽到全文包含。
+_SHORT_ANSWER_CHARS = 120
 
 
 def is_refusal(text: str) -> bool:
     """判断模型输出是否表达了"证据不足，无法回答"。
 
-    判定采用**子串包含**而非完全相等：模型常把哨兵嵌在句子里
-    （例如"INSUFFICIENT_EVIDENCE：现有资料未涉及该问题"）。
+    ## 为什么不能简单地用子串包含
+
+    最初的实现是"包含任一拒答表述即判拒答"，理由是"误判为拒答只是少答一题，
+    漏判则是编造答案"。这个推理在**只有哨兵**的时候成立，但中文表述引入了
+    一个它没有覆盖的情形：**模型会引用材料里的句子，而材料里就有"证据不足"四个字**。
+
+    实测踩到过：一次 agentic 问答产出了 2,228 字、结构完整、引用齐全的答案，
+    只因正文中引用了论文原文"若证据不足，可搜索更多论文…"，
+    就被整体判为拒答丢弃——`refused=True`、引用数 0、引用绑定完全没执行。
+    那不是"少答一题"，那是**把最好的答案扔掉了**。
+
+    ## 现在的判据：位置 + 长度
+
+    - **全大写哨兵**（``INSUFFICIENT_EVIDENCE``）无歧义，出现在任何位置都算；
+    - **中文表述**只在两种情形下算：出现在**答案开头**（声明的位置），
+      或整段答案很短（本身就是一句声明）。
+      出现在长答案中间的，按引用处理。
 
     Args:
         text: 模型输出的答案正文。
@@ -69,4 +90,11 @@ def is_refusal(text: str) -> bool:
     if not text:
         return False
     stripped = text.strip()
-    return any(phrase in stripped for phrase in REFUSAL_PHRASES)
+    if not stripped:
+        return False
+    if INSUFFICIENT_EVIDENCE in stripped:
+        return True
+    if len(stripped) <= _SHORT_ANSWER_CHARS:
+        return any(phrase in stripped for phrase in _ZH_REFUSAL_PHRASES)
+    head = stripped[:_REFUSAL_PREFIX_CHARS]
+    return any(phrase in head for phrase in _ZH_REFUSAL_PHRASES)

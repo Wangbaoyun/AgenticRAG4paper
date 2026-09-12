@@ -209,6 +209,46 @@ class TestPricing:
         assert "estimated_cost" in Usage.model_fields
         assert "estimated_cost_usd" not in Usage.model_fields
 
+    def test_empty_accumulator_adopts_the_reading_currency(self) -> None:
+        """**回归测试**：空累加器必须让出币种，否则人民币读数被标成美元。
+
+        实测事故：agentic 会话报告 ``estimated_cost=0.279, cost_currency="USD"``，
+        而按 ``SCITRACE_PRICING__CURRENCY=CNY`` 配置，这个数其实是 0.279 元。
+        成因是 ``merge`` 无条件取 ``self.cost_currency``，而最常见的用法正是
+        ``Usage().merge(读数)``——空累加器的 ``USD`` 只是字段默认值。
+        """
+        from scitrace.domain.session import Usage
+
+        reading = Usage(
+            prompt_tokens=100,
+            completion_tokens=50,
+            estimated_cost=0.5,
+            cost_currency="CNY",
+            cost_known=True,
+        )
+        assert Usage().is_identity, "空 Usage 必须是累加单位元"
+        merged = Usage().merge(reading)
+        assert merged.cost_currency == "CNY"
+        assert merged.estimated_cost == pytest.approx(0.5)
+        # 累加器一旦有读数，就由它继续持有币种
+        assert merged.merge(reading).cost_currency == "CNY"
+
+    def test_accumulator_recovers_currency_after_an_unknown_cost_reading(self) -> None:
+        """先并入一次"成本不可知"的读数，之后仍须认领真实币种。
+
+        ``cost_known`` 为假时币种没有意义，所以那种读数不该把累加器的币种钉死。
+        """
+        from scitrace.domain.session import Usage
+
+        failed = Usage(prompt_tokens=7, cost_known=False, cost_currency="USD")
+        accumulator = Usage().merge(failed)
+        assert accumulator.cost_currency == "USD", "此刻只有这一次读数，无从判断"
+        recovered = accumulator.merge(
+            Usage(prompt_tokens=10, estimated_cost=0.1, cost_currency="CNY", cost_known=True)
+        )
+        assert recovered.cost_currency == "CNY", "知道成本的一方才是币种来源"
+        assert recovered.cost_known is False, "有一次成本不可知，整体就不可知"
+
     def test_merge_does_not_add_currency(self) -> None:
         """币种不是可加量：把两个币种"相加"会得到一个没有意义的字符串。"""
         from scitrace.domain.session import Usage

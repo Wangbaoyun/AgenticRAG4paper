@@ -350,6 +350,51 @@ class TestTerminationConditions:
         assert result.status is SessionStatus.TRUNCATED
         assert result.answer is not None
 
+    async def test_wrap_up_does_not_discard_an_answer_the_model_already_gave(
+        self, tmp_path: Path
+    ) -> None:
+        """**回归测试**：循环因兜底结束时，若模型已给出答案，不得重新合成。
+
+        实测事故：一次 12 步会话在最后一步由模型自己答出 6,162 字符，
+        撞上 ``max_steps`` 后强制收尾又花 39.96 秒重新合成一份 3,447 字符的答案，
+        用户拿到的是模型**没有选择**的那一份。``answer_question`` 按设计
+        可以不终止会话（供模型预览），所以循环结束时仍存在的答案
+        就是模型最后认可的那一份，重做只会更差、更贵。
+
+        模型必须**先收集证据再作答**：没有证据时 ``answer_question`` 会
+        直接返回提示且不设置 ``state.answer``，于是循环末尾走的是
+        "无证据即拒答"的早退分支，根本到不了被改的收尾逻辑。
+        """
+        from scitrace.ports import LLMResponse, ToolCall
+
+        factory = FakeServicesFactory(tmp_path)
+        factory.settings.agent.max_steps = 2
+        services = await factory.build()
+        calls = {"n": 0}
+
+        async def scripted(messages, **kwargs):  # noqa: ANN001, ANN202, ARG001
+            calls["n"] += 1
+            tool = "gather_evidence" if calls["n"] == 1 else "answer_question"
+            return LLMResponse(
+                content="",
+                tool_calls=(
+                    ToolCall(
+                        id=f"c{calls['n']}",
+                        name=tool,
+                        arguments={"question": "Q"} if tool == "gather_evidence" else {},
+                    ),
+                ),
+            )
+
+        factory.llm_agent.complete = scripted  # type: ignore[method-assign]
+        result = await AgentRuntime(services=services, question="Q", mode="agentic").run()
+
+        assert "max_steps_exceeded" in result.notes
+        assert result.answer is not None
+        assert not result.answer.refused
+        answers = [a for a in result.actions if a.tool == "answer_question"]
+        assert len(answers) == 1, "强制收尾重复合成了模型已经给出的答案"
+
     async def test_budget_truncates(self, tmp_path: Path) -> None:
         factory = FakeServicesFactory(tmp_path)
         factory.settings.agent.max_cost = 0.0

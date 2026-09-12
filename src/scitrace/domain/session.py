@@ -109,6 +109,16 @@ class Usage(SanitizedModel):
         ``cost_known`` 是**布尔**而非计数，用逻辑与合并：
         只要有一份用量的成本不可信，合并结果就不可信。把它也当计数相加会得到
         一个恒为真的整数，让标记失去意义。
+
+        币种不是可加量，取哪一边需要判断。**不能无条件取 ``self``**：
+        本方法最常见的用法是"把一个空累加器与一次真实读数合并"
+        （``Usage().merge(读数)``），而空累加器的币种只是字段默认值 ``USD``，
+        没有任何信息量。无条件取 ``self`` 会让一次人民币计价的会话
+        全程显示 ``cost_currency="USD"``——**数值是人民币，标签写美元**。
+        实测踩到过：agentic 会话报出 ``0.279 USD``，而按配置它其实是 0.279 CNY。
+
+        规则：**空累加器（identity）让位于有读数的一方**；两边都有读数时取
+        ``self``（同一次会话内计价配置相同，正常情形下两者相等）。
         """
         merged = {
             name: getattr(self, name) + getattr(other, name)
@@ -116,10 +126,30 @@ class Usage(SanitizedModel):
             if name not in {"cost_known", "cost_currency"}
         }
         merged["cost_known"] = self.cost_known and other.cost_known
-        # 币种不是可加量：同一次会话内计价配置是同一个，取自身即可。
-        # 把两个币种"相加"会得到一个没有意义的字符串。
-        merged["cost_currency"] = self.cost_currency
+        merged["cost_currency"] = (
+            other.cost_currency if self._should_defer_currency(other) else self.cost_currency
+        )
         return type(self)(**merged)
+
+    def _should_defer_currency(self, other: Self) -> bool:
+        """合并时是否应把币种让给 ``other``。
+
+        两种情形需要让位，其余情形由 ``self`` 持有（同一次会话内计价配置相同）：
+
+        1. ``self`` 是累加单位元——它还没并入任何读数，币种只是字段默认值；
+        2. ``other`` 知道自己的成本而 ``self`` 不知道——``cost_known`` 为假时
+           币种没有意义，此时有读数的一方才是币种的来源。
+        """
+        return self.is_identity or (other.cost_known and not self.cost_known)
+
+    @property
+    def is_identity(self) -> bool:
+        """是否是累加单位元（所有计数为零，尚未并入任何读数）。"""
+        return all(
+            getattr(self, name) == 0
+            for name in type(self).model_fields
+            if name not in {"cost_currency", "cost_known"}
+        )
 
 
 class StageTiming(SanitizedModel):
@@ -143,6 +173,15 @@ class ActionRecord(SanitizedModel):
     tool: str
     arguments: dict[str, object] = Field(default_factory=dict)
     observation_summary: str = ""
+    #: 本步执行**之后**的累计 token。相邻两步之差即该步的净消耗。
+    #:
+    #: 加这个字段的直接动机：Agentic 模式唯一一次真实运行烧掉 171,694 token，
+    #: 而当时的会话记录里**看不到 token 花在哪一步**——只能看到一个总数。
+    #: 没有逐步分解，任何关于"成本从哪来"的判断都只能是猜测。
+    tokens_after: int = Field(default=0, ge=0)
+    #: 回灌给模型的观测**全文**长度（``observation_summary`` 是截断到 300 字后的版本，
+    #: 只用于会话记录）。它直接决定历史膨胀的速度。
+    observation_chars: int = Field(default=0, ge=0)
     duration_s: float = Field(default=0.0, ge=0.0)
     error: str | None = None
 

@@ -193,6 +193,34 @@ class TestBindCitations:
         answer = bind_citations("证据不足，无法回答", evidence=[item], sources={})
         assert answer.refused is True
 
+    def test_long_answer_quoting_the_refusal_phrase_still_binds_citations(self) -> None:
+        """**回归测试**：正文引用材料里的"证据不足"不得让整段答案被判为拒答。
+
+        实测事故（agentic 模式，2024 语料真实问答）：模型产出了 2,228 字、
+        结构完整、引用齐全的答案，只因正文中段（第 1,781 字符）引用了论文原文
+        "若证据不足，可搜索更多论文…"，就被 ``is_refusal`` 的子串匹配判为拒答。
+        后果不是"少答一题"，而是**把最好的答案扔掉了**：``refused=True``、
+        ``citations == []``、引用绑定根本没执行，用户看到的是满屏未替换的
+        ``ev-`` 裸键。
+
+        拒答是一句**声明**（出现在开头），引用是**内容**（出现在中间）。
+        """
+        item = evidence()
+        quotation = "若证据不足，可搜索更多论文、收集先前证据引用的论文、或换短语重新收集证据"
+        head = "PaperQA2 的关键工具包括 Paper Search Tool、Gather Evidence Tool 与 Generate Answer Tool。"
+        body = f"其中证据收集工具的设计动机是：{quotation}。" * 6
+        answer = bind_citations(
+            f"{head}{body}综上，这些工具共同构成 agentic 检索流程 (ev-"
+            f"{item.key.removeprefix('ev-')})。",
+            evidence=[item],
+            sources={"src-1": source()},
+        )
+        assert len(answer.raw_text) > 120, "必须长于短答案阈值，否则测的是另一条分支"
+        assert quotation in answer.raw_text, "被引用的原文必须真的在答案里"
+        assert answer.refused is False, "引用材料不是拒答"
+        assert answer.citations, "引用必须被成功绑定"
+        assert "ev-" not in answer.text, "裸键必须已被替换为可读引用"
+
     def test_references_are_in_first_citation_order(self) -> None:
         b = evidence("frag001", source_key="src-b")
         a = evidence("frag000", source_key="src-a")

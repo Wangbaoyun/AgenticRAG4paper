@@ -301,3 +301,59 @@ class TestErrorHandling:
         monkeypatch.setattr(cli, "index_status", interrupt)
         assert cli.main(["status"]) == 1
         assert "已中断" in capsys.readouterr().err
+
+
+class TestTrace:
+    """逐步执行追踪。
+
+    存在的理由：Agentic 模式唯一一次真实运行烧掉 171,694 token，
+    而当时**看不到 token 花在哪一步**。没有这张表，任何关于成本来源的判断
+    都只能是猜测。
+    """
+
+    def test_json_includes_actions(self, fake_services, capsys: pytest.CaptureFixture) -> None:
+        assert cli.main(["ask", "问题", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert "actions" in payload
+        assert isinstance(payload["actions"], list)
+
+    def test_action_entries_carry_telemetry(
+        self, fake_services, capsys: pytest.CaptureFixture
+    ) -> None:
+        cli.main(["ask", "问题", "--json"])
+        actions = json.loads(capsys.readouterr().out)["actions"]
+        assert actions, "确定性流程也必须留下动作记录"
+        for action in actions:
+            assert action["step"] >= 1
+            assert action["tool"]
+            assert action["observation_chars"] >= 0
+            assert action["tokens_after"] >= 0
+
+    def test_tokens_after_is_monotonic(
+        self, fake_services, capsys: pytest.CaptureFixture
+    ) -> None:
+        """累计 token 必须单调不减，否则"相邻两步之差即本步消耗"这个读法不成立。"""
+        cli.main(["ask", "问题", "--json"])
+        tokens = [a["tokens_after"] for a in json.loads(capsys.readouterr().out)["actions"]]
+        assert tokens == sorted(tokens)
+
+    def test_trace_renders_table(self, fake_services, capsys: pytest.CaptureFixture) -> None:
+        assert cli.main(["ask", "问题", "--trace"]) == 0
+        out = capsys.readouterr().out
+        assert "工具" in out and "累计" in out
+        assert "search_literature" in out
+
+    def test_trace_does_not_break_json_mode(
+        self, fake_services, capsys: pytest.CaptureFixture
+    ) -> None:
+        """``--json`` 与 ``--trace`` 同时给出时，stdout 仍必须是纯 JSON。"""
+        assert cli.main(["ask", "问题", "--trace", "--json"]) == 0
+        json.loads(capsys.readouterr().out)  # 混入表格会在这里失败
+
+    def test_trace_with_no_actions_is_graceful(
+        self, fake_services, capsys: pytest.CaptureFixture
+    ) -> None:
+        from scitrace.cli import _render_trace
+
+        assert "无工具调用" in _render_trace({"actions": []})
+        assert "无工具调用" in _render_trace({})

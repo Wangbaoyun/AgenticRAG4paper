@@ -68,9 +68,39 @@ class TestSentinels:
     def test_non_refusal(self, text: str) -> None:
         assert is_refusal(text) is False
 
-    def test_substring_matching_is_documented_tradeoff(self) -> None:
-        """拒答识别刻意偏宽松：误判为拒答只是少答一题，漏判则是编造答案。"""
+    def test_short_answer_containing_phrase_is_still_a_refusal(self) -> None:
+        """短答案里出现中文表述仍判拒答：整段本身就只有一句声明那么长。"""
         assert is_refusal("虽然证据不足，但根据常识可以推断……") is True
+
+    def test_long_answer_quoting_the_phrase_is_not_a_refusal(self) -> None:
+        """**回归测试**：长答案中**引用材料**里的"证据不足"不得判为拒答。
+
+        实测事故：一次 agentic 问答产出了 2,228 字、结构完整、引用齐全的答案，
+        只因正文引用了论文原文"若证据不足，可搜索更多论文…"，就被整体判为拒答，
+        `refused=True`、引用数 0、引用绑定根本没执行——把最好的答案扔掉了。
+        拒答是一句**声明**（在开头），引用是**内容**（在中间）。
+        """
+        answer = (
+            "论文提出的 Agent 通过三类工具实现自我批判式检索："
+            "论文搜索（Paper Search）、证据收集（Gather Evidence）与证据问答"
+            "（Generate Answer）。其中证据收集工具的设计动机是："
+            "若证据不足，可搜索更多论文、收集先前证据引用的论文、或换短语重新收集证据。"
+            "这一设计使系统能够在不重新开始的前提下逐步补齐证据链。"
+            "综上所述，该架构以「收集—评估—再收集」的循环替代了单轮检索"
+            "（skarlinski2024language pages 13-16）。"
+        )
+        assert len(answer) > 120  # 必须长于短答案阈值，否则测的是另一条分支
+        assert is_refusal(answer) is False
+
+    def test_refusal_declared_at_the_head_of_a_long_answer_is_detected(self) -> None:
+        """长答案若**开头**就声明拒答，仍须判为拒答——位置约束不能放过这种情况。"""
+        answer = "证据不足，无法回答该问题。" + "补充说明：" + "细节" * 200
+        assert len(answer) > 120
+        assert is_refusal(answer) is True
+
+    def test_ascii_sentinel_is_unambiguous_at_any_position(self) -> None:
+        """全大写哨兵无歧义，出现在长答案中间也判拒答。"""
+        assert is_refusal("材料支持该结论。" * 40 + "INSUFFICIENT_EVIDENCE") is True
 
 
 class TestPromptSets:

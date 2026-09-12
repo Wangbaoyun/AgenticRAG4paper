@@ -261,7 +261,19 @@ class AgentRuntime:
             self.state.notes.append("no_evidence")
             self.state.answer = _refusal("没有检索到可用的证据")
             return SessionStatus.REFUSED
-        if self.state.answer is None or termination is not None:
+        # 只在**还没有答案**时补一次合成。
+        #
+        # 不能写成 ``if self.state.answer is None or termination is not None``：
+        # 那样只要循环因任何原因结束（撞上 max_steps、超时、预算耗尽），
+        # 就会把模型**已经给出的答案**丢掉、重新合成一遍。实测代价很实在：
+        # 一次 12 步会话在最后一步由模型自己答出 6,162 字符，
+        # 强制收尾又花 39.96 秒、约 6k 输出 token 重新合成一份 3,447 字符的答案，
+        # 用户拿到的反而是模型**没有选择**的那一份。
+        #
+        # ``answer_question`` 本来就可以被调用多次（工具描述里写明它"不结束会话"，
+        # 供模型预览当前证据能支撑出什么）。因此到这里还存在答案，说明
+        # 那正是模型最后认可的一份，重做只会更差。
+        if self.state.answer is None:
             await self._execute("answer_question", {})
         return self._final_status(
             fallback=SessionStatus.SUCCESS if self.state.answer else SessionStatus.FAIL
@@ -285,7 +297,9 @@ class AgentRuntime:
             tool=name,
             arguments=dict(arguments),
             observation_summary=outcome.observation[:300],
+            observation_chars=len(outcome.observation),
             duration_s=duration,
+            tokens_after=self.services.usage.total_tokens,
         )
         self.state.actions.append(record)
         if self.on_step is not None:

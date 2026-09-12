@@ -121,10 +121,35 @@ class GatherEvidenceTool(Tool):
         results = await self.services.retriever.retrieve(
             arguments.question, allowed_keys=state.scoped_source_keys
         )
-        fragments = [item.fragment for item in results]
-        if not fragments:
+        # **在筛选之前**剔除已经入证的片段。
+        #
+        # 这不是微优化，是实测发现的主要成本来源：Agentic 模式一次真实运行的
+        # 108 次 LLM 调用里，约 100 次是 gather_evidence 内部的筛选调用，
+        # 而 agent 连调了 10 次 gather_evidence、每次都把同一批片段重新筛一遍。
+        # 早先的去重发生在 `state.add_evidence`（筛选**之后**）——
+        # 也就是说"这个片段我已经筛过了"这件事，系统要花完全额成本之后才知道。
+        #
+        # 实测该次运行的全部观测合计仅 2,603 token，而总消耗 182,866 ——
+        # 成本几乎全在筛选调用上，不在历史重发上。所以省这里的收益最直接。
+        known_fragments = {item.fragment_id for item in state.evidence}
+        fragments = [
+            item.fragment for item in results if item.fragment.fragment_id not in known_fragments
+        ]
+        if not results:
             return ToolOutcome(
                 observation=f"该范围内没有检索到片段。\n{status_line(state)}"
+            )
+        if not fragments:
+            # 明确告诉 agent"这里已经挖尽了"，而不是让它再换个说法重试一次。
+            # 早先它收到的是"新增 0 条证据"，这个信号太弱——实测它连续换了 5 种
+            # 措辞重复调用同一个工具。
+            return ToolOutcome(
+                observation=(
+                    "本次检索到的片段**全部已在证据集中**，没有新内容可筛。"
+                    "继续用相同或相近的查询不会有新收获：请换一个明显不同的角度，"
+                    "或直接用已有证据作答（answer_question）后结束（finish）。"
+                    f"\n{status_line(state)}"
+                )
             )
         evidence = await self.services.screener.screen(
             arguments.question, fragments, sources=self.services.sources
