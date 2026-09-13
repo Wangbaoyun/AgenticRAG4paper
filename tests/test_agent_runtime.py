@@ -971,3 +971,94 @@ class TestZeroEvidenceFallbackIsOffByDefault:
         tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
         await tool.run({"question": "q"}, AgentState(question="q"))
         assert strategies == [None], "默认配置下不该发生回退"
+
+
+class TestEvidenceBudgetForSynthesis:
+    """送进合成的证据必须封顶。
+
+    实测依据（EXPERIMENTS.md 实验二十二）：证据集大小是尾部成本与合成失败率的
+    **共同驱动**——一次收集了 16 条证据的运行触发了合成返回空输出的失败，
+    而该题平时只有 1–4 条。
+
+    **刻意只封顶"送进合成的部分"，不驱逐证据集**：驱逐会让已展示给模型的
+    引用键消失，可能产生悬空引用，而 SPEC §1.3 要求引用可回溯率为 100%。
+    """
+
+    def test_selection_keeps_the_most_relevant(self) -> None:
+        from scitrace.agent.tools import _select_for_synthesis
+
+        class _Item:
+            def __init__(self, key: str, relevance: int) -> None:
+                self.key, self.relevance = key, relevance
+
+        items = [_Item(f"e{i}", score) for i, score in enumerate([3, 9, 5, 8, 1])]
+        picked = _select_for_synthesis(items, 3)
+        assert [item.key for item in picked] == ["e1", "e3", "e2"]
+
+    def test_selection_is_stable_for_equal_scores(self) -> None:
+        """同分保持原序——排序不稳定会让同一问题两次运行看到不同材料。"""
+        from scitrace.agent.tools import _select_for_synthesis
+
+        class _Item:
+            def __init__(self, key: str) -> None:
+                self.key, self.relevance = key, 5
+
+        items = [_Item(f"e{i}") for i in range(6)]
+        assert [i.key for i in _select_for_synthesis(items, 3)] == ["e0", "e1", "e2"]
+
+    def test_no_budget_keeps_everything(self) -> None:
+        """默认不限——实测设上限会让覆盖率掉 24pp（实验二十四）。"""
+        from scitrace.agent.tools import _select_for_synthesis
+
+        class _Item:
+            def __init__(self) -> None:
+                self.relevance = 5
+
+        items = [_Item() for _ in range(40)]
+        assert len(_select_for_synthesis(items, None)) == 40
+
+    def test_under_budget_keeps_everything(self) -> None:
+        from scitrace.agent.tools import _select_for_synthesis
+
+        class _Item:
+            def __init__(self) -> None:
+                self.relevance = 5
+
+        items = [_Item() for _ in range(4)]
+        assert len(_select_for_synthesis(items, 12)) == 4
+
+    async def test_synthesis_receives_at_most_the_budget(self, tmp_path: Path) -> None:
+        """端到端：证据远超预算时，合成看到的条数必须被截到预算。"""
+        factory = FakeServicesFactory(tmp_path)
+        factory.settings.agent.evidence_budget = 2
+        services = await factory.build()
+        seen: list[int] = []
+
+        class _Spy:
+            last_usage = Usage(llm_calls=1, prompt_tokens=5, completion_tokens=5)
+
+            async def synthesize(self, question, evidence, *, sources):  # noqa: ANN001, ARG002
+                seen.append(len(evidence))
+                from scitrace.domain import Answer
+
+                return Answer(text="答 (c)", raw_text="答", citations=[])
+
+        services.synthesizer = _Spy()  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "answer_question")
+        state = AgentState(question="q")
+        state.evidence = [
+            Evidence(
+                key=f"ev-{i:08x}",
+                source_key="src-1",
+                fragment_id=f"f{i}",
+                summary="s",
+                relevance=5 + (i % 3),
+                citation="(c)",
+                page_label="1",
+            )
+            for i in range(9)
+        ]
+        await tool.run({}, state)
+        assert seen == [2], f"合成收到了 {seen} 条证据，预算未生效"
+        assert len(state.evidence) == 9, "证据集本身不该被驱逐（会产生悬空引用风险）"
+        assert any(n.startswith("evidence_trimmed") for n in state.notes)

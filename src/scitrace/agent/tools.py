@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
@@ -242,6 +243,26 @@ class GatherEvidenceTool(Tool):
         return ToolOutcome(observation=f"{summary}\n{status_line(state)}")
 
 
+def _select_for_synthesis(evidence: Sequence, budget: int | None) -> list:
+    """按相关性取前 ``budget`` 条，供合成使用。
+
+    排序是**稳定**的：同分证据保持原有先后，因此同一份证据集每次选出的是同一批，
+    不会因为排序不稳定而让同一问题的两次运行看到不同材料
+    （那会让成本与质量的对照失去意义）。
+
+    Args:
+        evidence: 当前证据集（全量）。
+        budget: 条数上限；``None`` 表示不限。
+
+    Returns:
+        选中的证据；未超限（或未设上限）时返回原序列的浅拷贝。
+    """
+    if budget is None or len(evidence) <= budget:
+        return list(evidence)
+    ranked = sorted(evidence, key=lambda item: -item.relevance)
+    return ranked[:budget]
+
+
 class AnswerQuestionTool(Tool):
     """基于当前证据集合成答案。不结束会话。"""
 
@@ -259,9 +280,22 @@ class AnswerQuestionTool(Tool):
             return ToolOutcome(
                 observation="当前没有任何证据，无法作答。请先调用 gather_evidence。"
             )
+        # 只把**相关性最高的前 N 条**送进合成，而不是整个证据集。
+        #
+        # 实测依据（EXPERIMENTS.md 实验二十二）：证据集大小是尾部成本与合成失败率的
+        # 共同驱动——一次收集了 16 条证据的运行触发了"推理 token 吃光预算、
+        # 合成返回空输出"的失败，而该题平时只有 1–4 条；P90 token 也随证据数 +22%。
+        #
+        # 刻意**不驱逐证据集本身**：驱逐会让已经展示给模型的引用键消失，
+        # 可能产生悬空引用，而 SPEC §1.3 要求引用可回溯率为 100%。
+        # 这里只是少送一些进合成，证据集与状态行仍反映全量，因此没有这个风险。
+        budget = self.services.settings.agent.evidence_budget
+        selected = _select_for_synthesis(state.evidence, budget)
+        if len(selected) < len(state.evidence):
+            state.notes.append(f"evidence_trimmed:{len(state.evidence)}->{len(selected)}")
         try:
             answer = await self.services.synthesizer.synthesize(
-                state.question, state.evidence, sources=self.services.sources
+                state.question, selected, sources=self.services.sources
             )
         except SynthesisError as error:
             # 合成**故障**与"模型说了证据不足"必须分开：前者是 FAIL，

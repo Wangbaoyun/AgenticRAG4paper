@@ -243,6 +243,19 @@ class AgentSettings(_ConfigGroup):
     no_new_evidence_limit: int = Field(
         default=2, ge=1, description="连续无新增证据达到该次数则自动收尾"
     )
+    evidence_budget: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "送进合成的证据条数上限（按相关性取前 N）；None 表示不限——**默认不限**。"
+            "**实测为负结果，故不设默认上限**：设为 12 时答案覆盖从 0.857 掉到 0.619"
+            "（−24pp）、tokens 反而 +18%，因为被裁掉的正是承载关键词的证据，"
+            "合成要么拒答（REFUSED 4→6）要么答得不全（实验二十四）。"
+            "文学里'上下文稀释 / 固定预算装配'的动机在本项目不成立："
+            "我们的证据集中位数只有 4 条，每一条都算数。"
+            "保留该旋钮供大语料场景使用，但不要在小证据集上调小它。"
+        ),
+    )
     zero_evidence_fallback: bool = Field(
         default=False,
         description=(
