@@ -243,6 +243,16 @@ class AgentSettings(_ConfigGroup):
     no_new_evidence_limit: int = Field(
         default=2, ge=1, description="连续无新增证据达到该次数则自动收尾"
     )
+    zero_evidence_fallback: bool = Field(
+        default=False,
+        description=(
+            "主检索策略取到 0 条证据时，换一条通路再试一次。"
+            "**默认关闭**：实测它能减少截断（TRUNCATED 9→4、SUCCESS 14→18），"
+            "但代价是 token 上升约 11%（P90 上升 22%）——它换来的是更完整的证据集，"
+            "而证据集变大又会推高合成开销、并提高合成因推理 token 吃光预算而失败的概率。"
+            "需要更完整的证据时打开，需要省 token 时保持关闭。"
+        ),
+    )
 
 
 class MetadataSettings(_ConfigGroup):

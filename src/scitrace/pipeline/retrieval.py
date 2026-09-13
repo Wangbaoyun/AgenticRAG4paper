@@ -121,6 +121,7 @@ class Retriever:
         *,
         k: int | None = None,
         allowed_keys: Collection[SourceKey] | None = None,
+        strategy: str | None = None,
     ) -> list[ScoredFragment]:
         """按配置策略检索。
 
@@ -128,6 +129,9 @@ class Retriever:
             query: 查询串。
             k: 返回条数；``None`` 时取配置的 ``retrieval.k``。
             allowed_keys: 仅在该文献集合内检索（Agent 选定候选论文后使用）。
+            strategy: 覆盖配置的策略，**仅用于单次调用的有条件回退**
+                （见 `GatherEvidenceTool` 的零证据回退）。默认 ``None`` 即按配置走，
+                因此它不影响任何既有调用路径的行为。
 
         Returns:
             按相关性降序排列的结果。索引为空或无命中时返回空列表。
@@ -140,16 +144,16 @@ class Retriever:
         if top_k <= 0 or not query.strip():
             return []
 
-        strategy = self.settings.strategy
-        if strategy == "dense":
+        chosen = self.settings.strategy if strategy is None else strategy
+        if chosen == "dense":
             return await self._dense(query, top_k, allowed_keys)
-        if strategy == "dense_mmr":
+        if chosen == "dense_mmr":
             return await self._dense_mmr(query, top_k, allowed_keys)
-        if strategy == "hybrid_rrf":
+        if chosen == "hybrid_rrf":
             return await self._hybrid_rrf(query, top_k, allowed_keys)
-        if strategy == "hybrid_rrf_rerank":
+        if chosen == "hybrid_rrf_rerank":
             return await self._hybrid_rrf_rerank(query, top_k, allowed_keys)
-        raise ValueError(f"未知的检索策略 {strategy!r}")
+        raise ValueError(f"未知的检索策略 {chosen!r}")
 
     # ---------------------------------------------------------------- 各路实现 --
 

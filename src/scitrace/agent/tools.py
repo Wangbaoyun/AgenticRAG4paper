@@ -116,6 +116,52 @@ class GatherEvidenceTool(Tool):
     def __init__(self, services) -> None:  # noqa: ANN001
         self.services = services
 
+    #: 零证据时的回退策略。
+    #:
+    #: 选 `hybrid_rrf` 而非 `hybrid_rrf_rerank`：后者要加载重排模型，
+    #: 而回退只在少数失败查询上触发，为它常驻一个 Cross-Encoder 不划算。
+    FALLBACK_STRATEGY = "hybrid_rrf"
+
+    async def _fallback_retrieve(
+        self, question: str, state: AgentState
+    ) -> tuple[list, bool]:
+        """主策略零证据时，换一条检索通路再试一次。
+
+        **只筛真正新的片段**：主策略已经筛过（并拒绝）的片段在这里被排除，
+        否则回退会把同一批片段用第二次调用重筛一遍——同一片段对同一问题的
+        评分不会改变，那是纯浪费。这条约束让回退的额外开销只落在
+        "换了通路才召回到的新片段"上。
+
+        Args:
+            question: 本轮取证用的子问题。
+            state: 当前会话状态（读取已筛集合，写入新筛集合）。
+
+        Returns:
+            ``(新增证据, 是否真的执行了回退)``。未执行回退时第二项为 False。
+        """
+        try:
+            results = await self.services.retriever.retrieve(
+                question,
+                allowed_keys=state.scoped_source_keys,
+                strategy=self.FALLBACK_STRATEGY,
+            )
+        except Exception as error:  # noqa: BLE001 - 回退失败不该中断会话
+            logger.warning("零证据回退检索失败，保持原结果：%s", error)
+            return [], False
+
+        fresh = [
+            item.fragment
+            for item in results
+            if item.fragment.fragment_id not in state.screened_fragment_ids
+        ]
+        if not fresh:
+            return [], True
+        evidence = await self.services.screener.screen(
+            question, fresh, sources=self.services.sources
+        )
+        state.screened_fragment_ids.update(item.fragment_id for item in fresh)
+        return list(evidence), True
+
     async def _run(self, arguments: BaseModel | None, state: AgentState) -> ToolOutcome:
         assert isinstance(arguments, _GatherArgs)
         results = await self.services.retriever.retrieve(
@@ -131,9 +177,14 @@ class GatherEvidenceTool(Tool):
         #
         # 实测该次运行的全部观测合计仅 2,603 token，而总消耗 182,866 ——
         # 成本几乎全在筛选调用上，不在历史重发上。所以省这里的收益最直接。
+        # 排除两类片段：**已入证**的，以及**已筛过但被拒**的。
+        # 后者同样重要——同一片段对同一问题的评分不会改变，重筛一次就是白花一次调用。
         known_fragments = {item.fragment_id for item in state.evidence}
         fragments = [
-            item.fragment for item in results if item.fragment.fragment_id not in known_fragments
+            item.fragment
+            for item in results
+            if item.fragment.fragment_id not in known_fragments
+            and item.fragment.fragment_id not in state.screened_fragment_ids
         ]
         if not results:
             return ToolOutcome(
@@ -154,8 +205,29 @@ class GatherEvidenceTool(Tool):
         evidence = await self.services.screener.screen(
             arguments.question, fragments, sources=self.services.sources
         )
+        # 记账：这一批都已经筛过了，无论采纳与否
+        state.screened_fragment_ids.update(item.fragment_id for item in fragments)
         added = state.add_evidence(evidence)
         self.services.merge_usage(self.services.screener.last_usage)
+
+        # ---- 零证据回退（改进 C'）----
+        #
+        # 实测依据：某类问题（"哪家机构提出了 X"这种实体归属型）在 dense_mmr 下
+        # 会把**正确文献排到第 3 名之后、片段相似度≈0**，筛选于是全部拒绝，
+        # 最终零证据 → 拒答。这类拒答在一道实体归属题上占 14%（5/35 次）。
+        # 而换成 hybrid_rrf 后，同一查询能把正确文献排到第 1 名（实验七 7.7）。
+        #
+        # 但**不能全局换策略**：实验二十一实测全局 hybrid_rrf 会把跨论文综合
+        # 打出 −30pp（RRF 无 MMR 多样性，单词命中散落到多篇论文上）。
+        # 所以只在"已经失败"时才切换——默认路径完全不变。
+        if added == 0 and self.services.settings.agent.zero_evidence_fallback:
+            fallback_evidence, fallback_used = await self._fallback_retrieve(
+                arguments.question, state
+            )
+            if fallback_used:
+                evidence = [*evidence, *fallback_evidence]
+                added = state.add_evidence(fallback_evidence)
+                self.services.merge_usage(self.services.screener.last_usage)
 
         summary = (
             f"新增 {added} 条证据（本次候选 {len(fragments)} 段，"

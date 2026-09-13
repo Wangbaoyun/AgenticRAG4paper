@@ -829,3 +829,145 @@ class TestHistoryCompaction:
     def test_short_observation_is_untouched(self, tmp_path: Path) -> None:
         runtime = self._runtime(tmp_path)
         assert runtime._truncate_observation("已收集 3 条证据。") == "已收集 3 条证据。"
+
+
+class _RecordingScreener:
+    """记录每一次筛选调用收到了哪些片段，并可切换"是否放行"。"""
+
+    def __init__(self, inner, *, accept: bool = True) -> None:  # noqa: ANN001
+        self.inner = inner
+        self.accept = accept
+        self.calls: list[list[str]] = []
+        self.last_usage = Usage(llm_calls=1, prompt_tokens=5, completion_tokens=5)
+
+    async def screen(self, question, fragments, *, sources):  # noqa: ANN001
+        self.calls.append([f.fragment_id for f in fragments])
+        results = await self.inner.screen(question, fragments, sources=sources)
+        return list(results) if self.accept else []
+
+
+class TestScreenedFragmentDedup:
+    """**已经筛过并被拒**的片段不得在后续轮次里重筛。
+
+    同一片段对同一问题的评分不会改变，重筛一次就是白花一次 LLM 调用。
+    这是本项目在"重复筛选"这一类缺陷上的第二处：第一处是"已入证片段被重筛"
+    （已在 `GatherEvidenceTool` 预过滤里修掉），但预过滤只排除已入证的，
+    被拒片段仍会每轮重筛。
+    """
+
+    async def test_rejected_fragments_are_not_screened_again(self, tmp_path: Path) -> None:
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+        recorder = _RecordingScreener(services.screener)
+        services.screener = recorder  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        state = AgentState(question="q")
+
+        await tool.run({"question": "q"}, state)
+        first = sum(len(c) for c in recorder.calls)
+        assert first > 0, "第一轮应当有片段被送去筛选"
+
+        await tool.run({"question": "q"}, state)
+        second = sum(len(c) for c in recorder.calls) - first
+        assert second == 0, f"同一批片段被重筛了 {second} 段（纯浪费）"
+
+    async def test_screened_ids_are_recorded_even_when_rejected(self, tmp_path: Path) -> None:
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+        recorder = _RecordingScreener(services.screener, accept=False)
+        services.screener = recorder  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        state = AgentState(question="q")
+        await tool.run({"question": "q"}, state)
+        assert state.screened_fragment_ids, "被拒片段也必须记账，否则下一轮会重筛"
+        assert state.evidence == []
+
+
+class TestZeroEvidenceFallback:
+    """主策略零证据时换一条检索通路再试一次（改进 C'）。
+
+    实测依据：实体归属类问题在 `dense_mmr` 下会把正确文献排到第 3 名之后、
+    片段相似度≈0，筛选全部拒绝 → 零证据 → 拒答（一道题上占 14%）。
+    但**不能全局换策略**——全局 `hybrid_rrf` 会把跨论文综合打出 −30pp。
+    """
+
+    async def test_zero_evidence_triggers_a_fallback_retrieval(self, tmp_path: Path) -> None:
+        factory = FakeServicesFactory(tmp_path)
+        factory.settings.agent.zero_evidence_fallback = True
+        services = await factory.build()
+        strategies: list[str | None] = []
+        original = services.retriever.retrieve
+
+        async def spy(query, **kwargs):  # noqa: ANN001, ANN202
+            strategies.append(kwargs.get("strategy"))
+            return await original(query, **kwargs)
+
+        services.retriever.retrieve = spy  # type: ignore[method-assign]
+        # 全部拒收 → added == 0 → 应当触发回退
+        services.screener = _RecordingScreener(services.screener, accept=False)  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        await tool.run({"question": "q"}, AgentState(question="q"))
+        assert strategies == [None, "hybrid_rrf"], f"回退未按预期触发：{strategies}"
+
+    async def test_no_fallback_when_evidence_was_found(self, tmp_path: Path) -> None:
+        """有证据时不得回退——回退是失败路径的补救，不是常态路径。"""
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+        strategies: list[str | None] = []
+        original = services.retriever.retrieve
+
+        async def spy(query, **kwargs):  # noqa: ANN001, ANN202
+            strategies.append(kwargs.get("strategy"))
+            return await original(query, **kwargs)
+
+        services.retriever.retrieve = spy  # type: ignore[method-assign]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        await tool.run({"question": "q"}, AgentState(question="q"))
+        assert strategies == [None], "有证据却回退了，等于白白多跑一次检索"
+
+    async def test_fallback_only_screens_fragments_the_main_path_missed(
+        self, tmp_path: Path
+    ) -> None:
+        """回退**绝不能**重筛主路径已筛过的片段。
+
+        同一片段对同一问题评分不变，重筛是纯浪费——而回退恰恰是最该省的地方，
+        因为它只在已经出问题的时候触发。
+        """
+        factory = FakeServicesFactory(tmp_path)
+        factory.settings.agent.zero_evidence_fallback = True
+        services = await factory.build()
+        recorder = _RecordingScreener(services.screener, accept=False)
+        services.screener = recorder  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        state = AgentState(question="q")
+        await tool.run({"question": "q"}, state)
+
+        all_ids = [fid for call in recorder.calls for fid in call]
+        assert len(all_ids) == len(set(all_ids)), (
+            f"有片段被重复筛选：{len(all_ids)} 次调用 vs {len(set(all_ids))} 个唯一片段"
+        )
+
+
+class TestZeroEvidenceFallbackIsOffByDefault:
+    """回退**默认关闭**——它是质量与 token 之间的取舍，不是免费改进。
+
+    实测（EXPERIMENTS.md 实验二十二）：打开后 TRUNCATED 9→4、SUCCESS 14→18，
+    但每题 tokens +11%（P90 +22%），且因证据集变大触发了一次
+    `synthesis_failed`（推理 token 吃光预算）。默认必须是省 token 的那一侧。
+    """
+
+    async def test_no_fallback_by_default(self, tmp_path: Path) -> None:
+        factory = FakeServicesFactory(tmp_path)
+        services = await factory.build()
+        strategies: list[str | None] = []
+        original = services.retriever.retrieve
+
+        async def spy(query, **kwargs):  # noqa: ANN001, ANN202
+            strategies.append(kwargs.get("strategy"))
+            return await original(query, **kwargs)
+
+        services.retriever.retrieve = spy  # type: ignore[method-assign]
+        services.screener = _RecordingScreener(services.screener, accept=False)  # type: ignore[assignment]
+        tool = next(t for t in build_default_tools(services) if t.name == "gather_evidence")
+        await tool.run({"question": "q"}, AgentState(question="q"))
+        assert strategies == [None], "默认配置下不该发生回退"

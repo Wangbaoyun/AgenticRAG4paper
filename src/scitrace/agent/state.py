@@ -33,6 +33,13 @@ class AgentState(BaseModel):
     #: 空集合表示"限定了范围但一篇都没找到"——这两者语义不同，不能合并。
     scoped_source_keys: set[SourceKey] | None = None
     evidence: list[Evidence] = Field(default_factory=list)
+    #: 已经筛过、且**未被采纳**的片段 id。
+    #:
+    #: 没有这个集合时，被筛掉的片段会在**每一轮** `gather_evidence` 里重新筛一遍——
+    #: 而同一片段对同一问题的评分不会改变，那些调用是纯浪费。
+    #: 实测背景：预过滤最初只排除"已入证"的片段，被拒片段仍会被反复重筛；
+    #: 这是本项目在"重复筛选"这一类缺陷上的第二处（第一处见 `GatherEvidenceTool`）。
+    screened_fragment_ids: set[str] = Field(default_factory=set)
     answer: Answer | None = None
     actions: list[ActionRecord] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
