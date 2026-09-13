@@ -28,6 +28,7 @@ LitQA2 一类的数据集有自己的许可，搬运它会让"零上游复制"�
 from __future__ import annotations
 
 import json
+import collections
 import logging
 import time
 from collections.abc import Iterable, Sequence
@@ -88,11 +89,48 @@ class CaseResult:
 
     @property
     def keyword_hit(self) -> bool:
-        """期望关键词是否全部命中（无期望关键词时恒为 True）。"""
+        """期望关键词是否全部命中（无期望关键词时恒为 True）。
+
+        **单个关键词可以用 ``|`` 声明多个语言变体**，例如
+        ``"intention|意图|intent"``；命中任意一个即算该关键词命中。
+
+        这条机制是必需的，不是便利功能。实测：**答案语言在运行间随机漂移**
+        （同一道英文问题，有时答英文、有时答中文），而关键词写的是英文，
+        于是同一个答案对错会被语言决定：
+
+        | 题 | 英文答案 | 中文/混合答案 |
+        | --- | --- | --- |
+        | a20（`refinement`） | 3/4 命中 | **0/5 命中** |
+        | a05（`14.8 trillion`） | 30/33 命中 | 5/14 命中 |
+
+        留出集上那次"覆盖率 −9.5pp"就是被这个混淆造成的假象：
+        掉覆盖的三道题恰好都答成了中文，而上一次运行恰好答成英文。
+        """
         if not self.case.expected_keywords:
             return True
         lowered = self.answer.lower()
-        return all(word.lower() in lowered for word in self.case.expected_keywords)
+        return all(
+            any(variant.lower() in lowered for variant in word.split("|"))
+            for word in self.case.expected_keywords
+        )
+
+    @property
+    def answer_language(self) -> str:
+        """答案主体语言：``zh`` / ``en`` / ``mixed``。
+
+        记进报告是为了让上面的语言混淆**始终可见**——覆盖率、关键词命中
+        这些代理指标都要与它一起读，否则会把语言差异误读成质量差异。
+        """
+        text = self.answer or ""
+        if not text:
+            return "none"
+        cjk = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+        ratio = cjk / len(text)
+        if ratio > 0.15:
+            return "zh"
+        if ratio < 0.02:
+            return "en"
+        return "mixed"
 
     @property
     def forbidden_hit(self) -> bool:
@@ -252,6 +290,9 @@ class EvaluationReport:
             "answer_coverage": round(self.answer_coverage, 4),
             "citation_resolution_rate": round(self.citation_resolution_rate, 4),
             "hallucination_rate": round(self.hallucination_rate, 4),
+            "answer_language_mix": dict(
+                collections.Counter(item.answer_language for item in self.results)
+            ),
             "tokens_per_question": round(self.tokens_per_question, 1),
             "cost_per_question": round(self.cost_per_question, 6),
             "cost_currency": self.cost_currency,

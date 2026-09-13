@@ -2,7 +2,7 @@
 {"id": "a02", "question": "What average accuracy did Chinchilla reach on the MMLU benchmark?", "expected_answerable": true, "expected_keywords": ["67.5"], "forbidden_keywords": [], "kind": "具体数值"}
 {"id": "a03", "question": "In the Game of 24 task, what success rate did Tree of Thoughts achieve compared with chain-of-thought prompting?", "expected_answerable": true, "expected_keywords": ["74"], "forbidden_keywords": [], "kind": "具体数值"}
 {"id": "a04", "question": "What pass@1 accuracy did Reflexion achieve on the HumanEval coding benchmark?", "expected_answerable": true, "expected_keywords": ["91"], "forbidden_keywords": [], "kind": "具体数值"}
-{"id": "a05", "question": "How many tokens was DeepSeek-V3 pre-trained on?", "expected_answerable": true, "expected_keywords": ["14.8 trillion"], "forbidden_keywords": [], "kind": "具体数值"}
+{"id": "a05", "question": "How many tokens was DeepSeek-V3 pre-trained on?", "expected_answerable": true, "expected_keywords": ["14.8 trillion|14.8万亿|14.8 万亿"], "forbidden_keywords": [], "kind": "具体数值"}
 {"id": "a06", "question": "Which larger model does Mistral 7B outperform according to its paper?", "expected_answerable": true, "expected_keywords": ["Llama 2"], "forbidden_keywords": [], "kind": "具体事实"}
 {"id": "a07", "question": "What two kinds of memory does the original retrieval-augmented generation model combine?", "expected_answerable": true, "expected_keywords": ["parametric", "non-parametric"], "forbidden_keywords": [], "kind": "核心概念"}
 {"id": "a08", "question": "What mechanism does Self-RAG use to decide when to retrieve and to critique its own output?", "expected_answerable": true, "expected_keywords": ["token"], "forbidden_keywords": [], "kind": "核心概念"}
@@ -15,10 +15,10 @@
 {"id": "a15", "question": "What attention mechanism does DeepSeek-V2 introduce to improve inference efficiency?", "expected_answerable": true, "expected_keywords": ["latent"], "forbidden_keywords": [], "kind": "方法细节"}
 {"id": "a16", "question": "What existing organizational concept does MetaGPT borrow for multi-agent collaboration?", "expected_answerable": true, "expected_keywords": ["standardized operating procedures"], "forbidden_keywords": [], "kind": "方法细节"}
 {"id": "a17", "question": "Which mathematics benchmark does AutoGen evaluate on?", "expected_answerable": true, "expected_keywords": ["MATH"], "forbidden_keywords": [], "kind": "具体事实"}
-{"id": "a18", "question": "Which reasoning task categories does chain-of-thought prompting improve?", "expected_answerable": true, "expected_keywords": ["arithmetic"], "forbidden_keywords": [], "kind": "具体事实"}
-{"id": "a19", "question": "What does InstructGPT train language models to act in accordance with?", "expected_answerable": true, "expected_keywords": ["intention"], "forbidden_keywords": [], "kind": "核心概念"}
-{"id": "a20", "question": "What is the core iterative mechanism of Self-Refine?", "expected_answerable": true, "expected_keywords": ["refinement"], "forbidden_keywords": [], "kind": "核心概念"}
-{"id": "a21", "question": "For a given compute budget, what does LLaMA-1 conclude about model size and training data?", "expected_answerable": true, "expected_keywords": ["smaller"], "forbidden_keywords": [], "kind": "结论"}
+{"id": "a18", "question": "Which reasoning task categories does chain-of-thought prompting improve?", "expected_answerable": true, "expected_keywords": ["arithmetic|算术"], "forbidden_keywords": [], "kind": "具体事实"}
+{"id": "a19", "question": "What does InstructGPT train language models to act in accordance with?", "expected_answerable": true, "expected_keywords": ["intention|意图|intent"], "forbidden_keywords": [], "kind": "核心概念"}
+{"id": "a20", "question": "What is the core iterative mechanism of Self-Refine?", "expected_answerable": true, "expected_keywords": ["refinement|精炼|refine"], "forbidden_keywords": [], "kind": "核心概念"}
+{"id": "a21", "question": "For a given compute budget, what does LLaMA-1 conclude about model size and training data?", "expected_answerable": true, "expected_keywords": ["smaller|更小|小模型"], "forbidden_keywords": [], "kind": "结论"}
 {"id": "a22", "question": "What ability is central to the RAP retrieval-augmented planning framework?", "expected_answerable": true, "expected_keywords": ["analogy"], "forbidden_keywords": [], "kind": "方法细节"}
 {"id": "a23", "question": "Besides vector databases, what other sources does agentic retrieval-augmented generation draw on according to the survey?", "expected_answerable": true, "expected_keywords": ["api"], "forbidden_keywords": [], "kind": "综述"}
 {"id": "a24", "question": "Which organization is credited with introducing GraphRAG?", "expected_answerable": true, "expected_keywords": ["microsoft"], "forbidden_keywords": [], "kind": "具体事实"}

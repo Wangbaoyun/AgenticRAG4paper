@@ -381,3 +381,46 @@ class TestForbiddenKeywordsAreSafe:
         cases = load_cases(Path(__file__).resolve().parents[1] / "benchmarks/data/rag_qa.jsonl")
         guarded = [c for c in cases if c.forbidden_keywords]
         assert len(guarded) >= 7, f"防幻觉判据覆盖面过窄：{len(guarded)} 题"
+
+
+class TestKeywordLanguageVariants:
+    """关键词必须支持多语言变体。
+
+    实测：**答案语言在运行间随机漂移**，同一道英文问题有时答英文、有时答中文，
+    而关键词是英文——于是同一个答案的对错被语言决定：
+
+    | 题 | 英文答案 | 中文/混合答案 |
+    | --- | --- | --- |
+    | a20（`refinement`） | 3/4 命中 | **0/5 命中** |
+    | a05（`14.8 trillion`） | 30/33 命中 | 5/14 命中 |
+
+    留出集上"覆盖率 −9.5pp"正是这个混淆造成的假象。
+    """
+
+    def test_any_variant_counts_as_a_hit(self) -> None:
+        case = EvaluationCase(
+            question="q", expected_keywords=("refinement|精炼|refine",)
+        )
+        assert result(case=case, answer="模型对输出做精炼").keyword_hit is True
+        assert result(case=case, answer="iterative refinement").keyword_hit is True
+        assert result(case=case, answer="unrelated").keyword_hit is False
+
+    def test_all_keywords_still_required(self) -> None:
+        """变体机制不能把"全部关键词都要命中"放松成"命中任意一个"。"""
+        case = EvaluationCase(question="q", expected_keywords=("alpha|甲", "beta|乙"))
+        assert result(case=case, answer="甲").keyword_hit is False
+        assert result(case=case, answer="甲 乙").keyword_hit is True
+
+    def test_answer_language_is_recorded(self) -> None:
+        """语言必须进报告，否则混淆永远看不见。"""
+        zh = result(answer="这是中文答案，汉字占比很高。" * 4)
+        en = result(answer="This is an English answer with no CJK characters at all.")
+        assert zh.answer_language == "zh"
+        assert en.answer_language == "en"
+        assert result(answer="").answer_language == "none"
+
+    def test_report_reports_the_language_mix(self) -> None:
+        report = EvaluationReport(
+            results=[result(answer="中文答案" * 20), result(answer="english answer " * 10)]
+        )
+        assert "answer_language_mix" in report.summary()
