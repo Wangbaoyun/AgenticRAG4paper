@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -312,7 +313,7 @@ class TestHallucinationMetricIsNotVacuous:
         assert guarded, "评测集没有禁止词 → hallucination_rate 结构性恒为 0"
         # 禁止词应当落在库外题上：那些题"编造答案"才是真正的幻觉
         assert all(not case.expected_answerable for case in guarded)
-        assert len(guarded) >= 8
+        assert len(guarded) >= 7
 
     def test_fabricated_answer_on_an_out_of_corpus_case_is_caught(self) -> None:
         case = EvaluationCase(
@@ -342,3 +343,41 @@ class TestHallucinationMetricIsNotVacuous:
         assert refused.forbidden_hit is False
         assert refused.behavior_correct is True
         assert EvaluationReport(results=[refused]).hallucination_rate == pytest.approx(0.0)
+
+
+class TestForbiddenKeywordsAreSafe:
+    """禁止词必须**真的不在语料里**，否则指标会产生假阳性。
+
+    实测事故（EXPERIMENTS.md 实验二十五）：8 道库外题里有 **4 道**的禁止词
+    实际存在于语料中，其中 n07 的 "540b" 让一次**正确且带引用**的回答
+    （"材料中关于 PaLM 的模型规模有明确记载：PaLM-540B"）被记成幻觉。
+
+    这个缺陷在实验十三修复 `hallucination_rate`（它此前结构性恒为 0）
+    之前不可能暴露——**指标恒为 0 时，判据错得再离谱也看不出来**。
+    """
+
+    def test_forbidden_keywords_are_not_bare_short_numbers(self) -> None:
+        """禁止词不得是**裸短数字**。
+
+        实测：`29.7` / `25.8` 这类数字在 350 万字符的语料里必然偶然出现，
+        于是任何把该数字用在**别处**的回答都会被误判成幻觉。
+        具名或带单位的写法（`370,000`、`6-layer`、`30°c`）足够具体，不受此限。
+
+        > 注意这只是**启发式**护栏。真正的判据是"该串不在语料里"，
+        > 那需要对着索引查（实验二十五记录了逐词核查的结果与 4 处剔除）。
+        """
+        cases = load_cases(Path(__file__).resolve().parents[1] / "benchmarks/data/rag_qa.jsonl")
+        bare = re.compile(r"^\d+(\.\d+)?$")
+        offenders = [
+            f"{case.identifier}:{word!r}"
+            for case in cases
+            for word in case.forbidden_keywords
+            if bare.match(word) and len(word) <= 4
+        ]
+        assert not offenders, f"这些禁止词是裸短数字，会偶然命中：{offenders}"
+
+    def test_out_of_corpus_cases_keep_some_guard(self) -> None:
+        """库外题仍须有防幻觉判据，但不能靠不安全的关键词凑数。"""
+        cases = load_cases(Path(__file__).resolve().parents[1] / "benchmarks/data/rag_qa.jsonl")
+        guarded = [c for c in cases if c.forbidden_keywords]
+        assert len(guarded) >= 7, f"防幻觉判据覆盖面过窄：{len(guarded)} 题"
